@@ -17,4 +17,19 @@ const protect = async (req, res, next) => {
   }
 };
 
-module.exports = { protect };
+const requireRole = (...roles) => (req, res, next) => {
+  if (!req.user || !roles.includes(req.user.role)) {
+    return res.status(403).json({ message: `Role '${req.user?.role}' is not authorized` });
+  }
+  next();
+};
+
+const requireVerifiedEmail = (req, res, next) => {
+  if (!req.user?.isVerified) {
+    return res.status(403).json({ message: 'Email verification required' });
+  }
+  next();
+};
+
+module.exports = { protect, requireRole, requireVerifiedEmail };
+

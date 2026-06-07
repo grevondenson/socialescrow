@@ -1,5 +1,12 @@
 const router = require('express').Router();
-// TODO: import controller and wire routes
-// const ctrl = require('../controllers/auth.controller');
-router.get('/', (req, res) => res.json({ route: 'auth', status: 'stub' }));
+const authCtrl = require('../controllers/auth.controller');
+const { protect } = require('../middleware/auth.middleware');
+const { loginLimiter, registerLimiter } = require('../middleware/rateLimiter.middleware');
+
+router.post('/register', registerLimiter, authCtrl.register);
+router.post('/login', loginLimiter, authCtrl.login);
+router.get('/me', protect, authCtrl.getMe);
+router.get('/verify/:token', authCtrl.verifyEmail);
+router.post('/refresh', authCtrl.refreshToken);
+
 module.exports = router;

@@ -29,8 +29,13 @@ app.get('/health', (req, res) => res.json({ status: 'ok', env: process.env.NODE_
 // ── Error handler ────────────────────────────────────────────
 app.use(require('./middleware/error.middleware'));
 
+// Export app for testing
+module.exports = { app, server };
+
 // ── Start ────────────────────────────────────────────────────
-const PORT = process.env.PORT || 5000;
-connectDB().then(() => {
-  server.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
-});
+if (process.env.NODE_ENV !== 'test') {
+  const PORT = process.env.PORT || 5000;
+  connectDB().then(() => {
+    server.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+  });
+}

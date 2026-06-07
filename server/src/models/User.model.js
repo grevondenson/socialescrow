@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
-  name:            { type: String, required: true, trim: true },
+  fullName:        { type: String, required: true, trim: true },
   email:           { type: String, required: true, unique: true, lowercase: true },
   password:        { type: String, required: true, select: false },
   phone:           { type: String },
@@ -13,6 +13,8 @@ const userSchema = new mongoose.Schema({
   resetExpires:    { type: Date,   select: false },
   isBanned:        { type: Boolean, default: false },
   banReason:       { type: String },
+  kycVerified:     { type: Boolean, default: false },
+  kycVerifiedAt:   { type: Date },
   reputation: {
     totalTrades:    { type: Number, default: 0 },
     completedTrades:{ type: Number, default: 0 },
