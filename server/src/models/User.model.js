@@ -14,7 +14,7 @@ const userSchema = new mongoose.Schema({
   isBanned:        { type: Boolean, default: false },
   banReason:       { type: String },
   kycName:         { type: String },
-  kycPhone:        { type: String },
+  kycPhone:        { type: String, unique: true, sparse: true },
   kycVerified:     { type: Boolean, default: false },
   kycVerifiedAt:   { type: Date },
   sellerTier:      { type: String, enum: ['none', 'verified', 'trusted', 'top_seller'], default: 'none' },

@@ -88,7 +88,7 @@ const adminRemoveListing = async (req, res) => {
     await listing.save();
 
     await AuditLog.create({
-      action: 'listing_create', // Fallback to an existing enum action if listing_remove doesn't exist, we'll log it in metadata
+      action: 'listing_remove',
       userId: req.user.id,
       metadata: { action: 'admin_remove_listing', removedListingId: listing._id }
     });

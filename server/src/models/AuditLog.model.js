@@ -5,7 +5,7 @@ const auditLogSchema = new mongoose.Schema({
     type: String,
     enum: [
       'register', 'login', 'login_failure', 'logout',
-      'listing_create', 'trade_create',
+      'listing_create', 'listing_remove', 'trade_create',
       'kyc_submit', 'kyc_verified', 'kyc_mismatch',
       'email_verify_request', 'email_verified'
     ],

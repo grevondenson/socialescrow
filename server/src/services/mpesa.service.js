@@ -1,4 +1,5 @@
 const User = require('../models/User.model');
+const AuditLog = require('../models/AuditLog.model');
 
 const handleKYCWebhook = async (req, res) => {
   try {
@@ -20,11 +21,23 @@ const handleKYCWebhook = async (req, res) => {
       user.kycVerifiedAt = new Date();
       await user.save();
 
+      await AuditLog.create({
+        action: 'kyc_verified',
+        userId: user._id,
+        metadata: { MSISDN, kycData }
+      });
+
       res.json({
         message: 'KYC verified successfully',
         kycData,
       });
     } else if (kycStatus === 'rejected') {
+      await AuditLog.create({
+        action: 'kyc_mismatch',
+        userId: user._id,
+        metadata: { MSISDN, reason: kycData?.reason }
+      });
+
       res.status(400).json({
         message: 'KYC verification failed',
         reason: kycData?.reason,
