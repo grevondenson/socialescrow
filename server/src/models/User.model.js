@@ -13,8 +13,11 @@ const userSchema = new mongoose.Schema({
   resetExpires:    { type: Date,   select: false },
   isBanned:        { type: Boolean, default: false },
   banReason:       { type: String },
+  kycName:         { type: String },
+  kycPhone:        { type: String },
   kycVerified:     { type: Boolean, default: false },
   kycVerifiedAt:   { type: Date },
+  sellerTier:      { type: String, enum: ['none', 'verified', 'trusted', 'top_seller'], default: 'none' },
   reputation: {
     totalTrades:    { type: Number, default: 0 },
     completedTrades:{ type: Number, default: 0 },

@@ -1,13 +1,15 @@
 const router = require('express').Router();
+const listingsCtrl = require('../controllers/listings.controller');
 const { protect, requireVerifiedEmail } = require('../middleware/auth.middleware');
+const upload = require('../middleware/upload.middleware');
 
-router.get('/', (req, res) => res.json({ route: 'listings', status: 'ok' }));
+router.route('/')
+  .get(listingsCtrl.getListings)
+  .post(protect, requireVerifiedEmail, upload.array('proofScreenshots', 5), listingsCtrl.createListing);
 
-router.post('/', protect, requireVerifiedEmail, (req, res) => {
-  res.status(201).json({
-    message: 'Listing creation requires full implementation',
-    note: 'Email verified gate is active',
-  });
-});
+router.route('/:id')
+  .get(listingsCtrl.getListingById)
+  .patch(protect, listingsCtrl.updateListing)
+  .delete(protect, listingsCtrl.deleteListing);
 
 module.exports = router;
