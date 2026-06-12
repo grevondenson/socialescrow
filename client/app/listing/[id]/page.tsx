@@ -22,8 +22,22 @@ export default async function ListingPage({ params }: { params: { id: string } }
   }
 
   const cookieStore = cookies();
-  const token = cookieStore.get('refreshToken');
-  const isLoggedIn = !!token;
+  const tokenCookie = cookieStore.get('refreshToken');
+  let isLoggedIn = false;
+  
+  if (tokenCookie && tokenCookie.value) {
+    try {
+      // Basic server-side JWT expiry check without needing the secret
+      const payloadBase64 = tokenCookie.value.split('.')[1];
+      const payload = JSON.parse(Buffer.from(payloadBase64, 'base64').toString());
+      if (payload.exp * 1000 > Date.now()) {
+        isLoggedIn = true;
+      }
+    } catch (e) {
+      // Invalid or malformed token
+    }
+  }
+
   const actionUrl = isLoggedIn ? `/trade/new?listingId=${listing._id}` : `/login?redirect=/listing/${listing._id}`;
 
   return (
@@ -55,7 +69,7 @@ export default async function ListingPage({ params }: { params: { id: string } }
                 {listing.platform}
               </span>
               <span className={`text-xs px-3 py-1.5 rounded-full font-bold uppercase tracking-wide ${listing.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
-                {listing.status.replace('_', ' ')}
+                {listing.status.replaceAll('_', ' ')}
               </span>
             </div>
 
@@ -91,7 +105,7 @@ export default async function ListingPage({ params }: { params: { id: string } }
                 <div className="text-right">
                   <p className="text-xs text-indigo-400 uppercase tracking-wider font-bold mb-1">Tier</p>
                   <span className="bg-indigo-600 text-white text-xs px-2 py-1 rounded-md font-bold uppercase">
-                    {listing.seller.sellerTier.replace('_', ' ')}
+                    {listing.seller.sellerTier.replaceAll('_', ' ')}
                   </span>
                 </div>
               </div>
