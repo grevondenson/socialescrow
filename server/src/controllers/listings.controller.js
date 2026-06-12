@@ -1,8 +1,9 @@
 const Listing = require('../models/Listing.model');
 const AuditLog = require('../models/AuditLog.model');
-const { uploadStream } = require('../services/cloudinary.service');
+const { uploadStream, destroyImage } = require('../services/cloudinary.service');
 
 const createListing = async (req, res) => {
+  const uploadedImages = [];
   try {
     const { platform, followers, niche, engagementRate, accountAgeYears, priceKes, description } = req.body;
 
@@ -10,13 +11,14 @@ const createListing = async (req, res) => {
       return res.status(400).json({ message: 'Missing required fields' });
     }
 
-    const proofScreenshots = [];
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
         const result = await uploadStream(file.buffer);
-        proofScreenshots.push(result.secure_url);
+        uploadedImages.push({ url: result.secure_url, public_id: result.public_id });
       }
     }
+
+    const proofScreenshots = uploadedImages.map(img => img.url);
 
     const listing = new Listing({
       seller: req.user._id,
@@ -43,6 +45,9 @@ const createListing = async (req, res) => {
 
     res.status(201).json({ message: 'Listing created successfully', listing });
   } catch (error) {
+    for (const img of uploadedImages) {
+      await destroyImage(img.public_id);
+    }
     console.error('Create listing error:', error);
     res.status(500).json({ message: 'Failed to create listing' });
   }

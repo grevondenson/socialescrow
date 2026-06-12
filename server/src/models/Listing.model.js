@@ -15,6 +15,5 @@ const listingSchema = new mongoose.Schema({
 
 listingSchema.index({ platform: 1, status: 1 });
 listingSchema.index({ priceKes: 1 });
-listingSchema.index({ '$**': 'text' });
 
 module.exports = mongoose.model('Listing', listingSchema);

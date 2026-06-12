@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
+import { cookies } from 'next/headers';
 
 async function getListing(id: string) {
   try {
@@ -19,6 +20,11 @@ export default async function ListingPage({ params }: { params: { id: string } }
   if (!listing) {
     notFound();
   }
+
+  const cookieStore = cookies();
+  const token = cookieStore.get('refreshToken');
+  const isLoggedIn = !!token;
+  const actionUrl = isLoggedIn ? `/trade/new?listingId=${listing._id}` : `/login?redirect=/listing/${listing._id}`;
 
   return (
     <div className="min-h-screen bg-gray-50 pt-16 pb-12">
@@ -91,9 +97,9 @@ export default async function ListingPage({ params }: { params: { id: string } }
               </div>
             </div>
 
-            <button className="w-full bg-black text-white font-bold py-4 rounded-xl hover:bg-gray-800 transition-colors shadow-lg shadow-black/10">
+            <Link href={actionUrl} className="block text-center w-full bg-black text-white font-bold py-4 rounded-xl hover:bg-gray-800 transition-colors shadow-lg shadow-black/10">
               I&apos;m Interested
-            </button>
+            </Link>
             <p className="text-center text-xs text-gray-400 font-medium mt-4">
               Funds are held securely in escrow until credentials are verified.
             </p>

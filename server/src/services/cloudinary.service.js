@@ -26,6 +26,15 @@ const uploadStream = (buffer, folder = 'socialescrow/listings') => {
   });
 };
 
+const destroyImage = async (publicId) => {
+  try {
+    await cloudinary.uploader.destroy(publicId);
+  } catch (error) {
+    console.error('Cloudinary destroy error:', error);
+  }
+};
+
 module.exports = {
   uploadStream,
+  destroyImage,
 };

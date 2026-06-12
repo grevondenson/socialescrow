@@ -2,12 +2,14 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { createListing } from '@/lib/services/listings';
 
 const PLATFORMS = ['Instagram', 'TikTok', 'YouTube', 'X', 'Facebook', 'Snapchat'];
 
 export default function CreateListingPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -20,6 +22,7 @@ export default function CreateListingPage() {
 
     try {
       const data = await createListing(formData);
+      queryClient.invalidateQueries({ queryKey: ['listings'] });
       router.push(`/listing/${data.listing._id}`);
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to create listing');
