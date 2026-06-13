@@ -5,9 +5,18 @@ const User = require('../models/User.model');
 const Wallet = require('../models/Wallet.model');
 const AuditLog = require('../models/AuditLog.model');
 
+const sendRefreshToken = (res, token) => {
+  res.cookie('refreshToken', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+  });
+};
+
 const generateTokens = (userId) => {
   const accessToken = jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '15m' });
-  const refreshToken = jwt.sign({ id: userId }, process.env.REFRESH_TOKEN_SECRET || process.env.JWT_SECRET, { expiresIn: '7d' });
+  const refreshToken = jwt.sign({ id: userId }, process.env.REFRESH_TOKEN_SECRET || process.env.JWT_SECRET, { expiresIn: '30d' });
   return { accessToken, refreshToken };
 };
 
@@ -47,15 +56,17 @@ const register = async (req, res) => {
     await AuditLog.create({
       action: 'register',
       userId: user._id,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
       metadata: { email },
     });
 
     const { accessToken, refreshToken } = generateTokens(user._id);
+    sendRefreshToken(res, refreshToken);
 
     res.status(201).json({
       message: 'Registration successful. Please verify your email.',
       accessToken,
-      refreshToken,
       user: {
         id: user._id,
         fullName: user.fullName,
@@ -82,6 +93,8 @@ const login = async (req, res) => {
       await AuditLog.create({
         action: 'login_failure',
         userId: new User()._id,
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
         metadata: { email, reason: 'user_not_found' },
       });
       return res.status(401).json({ message: 'Invalid email or password' });
@@ -96,6 +109,8 @@ const login = async (req, res) => {
       await AuditLog.create({
         action: 'login_failure',
         userId: user._id,
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
         metadata: { reason: 'invalid_password' },
       });
       return res.status(401).json({ message: 'Invalid email or password' });
@@ -104,15 +119,17 @@ const login = async (req, res) => {
     await AuditLog.create({
       action: 'login',
       userId: user._id,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
       metadata: {},
     });
 
     const { accessToken, refreshToken } = generateTokens(user._id);
+    sendRefreshToken(res, refreshToken);
 
     res.json({
       message: 'Login successful',
       accessToken,
-      refreshToken,
       user: {
         id: user._id,
         fullName: user.fullName,
@@ -154,6 +171,14 @@ const verifyEmail = async (req, res) => {
     user.verifyExpires = undefined;
     await user.save();
 
+    await AuditLog.create({
+      action: 'email_verified',
+      userId: user._id,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+      metadata: {},
+    });
+
     res.json({ message: 'Email verified successfully' });
   } catch (err) {
     res.status(500).json({ message: 'Verification failed' });
@@ -162,10 +187,10 @@ const verifyEmail = async (req, res) => {
 
 const refreshToken = async (req, res) => {
   try {
-    const { refreshToken: token } = req.body;
+    const token = req.cookies?.refreshToken;
 
     if (!token) {
-      return res.status(400).json({ message: 'Refresh token required' });
+      return res.status(401).json({ message: 'Refresh token required' });
     }
 
     const decoded = jwt.verify(token, process.env.REFRESH_TOKEN_SECRET || process.env.JWT_SECRET);
@@ -176,13 +201,26 @@ const refreshToken = async (req, res) => {
     }
 
     const { accessToken: newAccessToken, refreshToken: newRefreshToken } = generateTokens(user._id);
+    sendRefreshToken(res, newRefreshToken);
 
     res.json({
       accessToken: newAccessToken,
-      refreshToken: newRefreshToken,
     });
   } catch (err) {
     res.status(401).json({ message: 'Invalid refresh token' });
+  }
+};
+
+const logout = async (req, res) => {
+  try {
+    res.clearCookie('refreshToken', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+    });
+    res.json({ message: 'Logged out successfully' });
+  } catch (err) {
+    res.status(500).json({ message: 'Logout failed' });
   }
 };
 
@@ -192,4 +230,5 @@ module.exports = {
   getMe,
   verifyEmail,
   refreshToken,
+  logout,
 };

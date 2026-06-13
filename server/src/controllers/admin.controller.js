@@ -1,6 +1,8 @@
 const User = require('../models/User.model');
 const AuditLog = require('../models/AuditLog.model');
 
+const Listing = require('../models/Listing.model');
+
 const getAuditLogs = async (req, res) => {
   try {
     const { limit = 50, page = 1 } = req.query;
@@ -67,7 +69,40 @@ const banUser = async (req, res) => {
   }
 };
 
+const getAdminListings = async (req, res) => {
+  try {
+    const listings = await Listing.find().sort({ createdAt: -1 }).populate('seller', 'kycName email');
+    res.json(listings);
+  } catch (error) {
+    console.error('Admin get listings error:', error);
+    res.status(500).json({ message: 'Failed to fetch admin listings' });
+  }
+};
+
+const adminRemoveListing = async (req, res) => {
+  try {
+    const listing = await Listing.findById(req.params.id);
+    if (!listing) return res.status(404).json({ message: 'Listing not found' });
+    
+    listing.status = 'removed';
+    await listing.save();
+
+    await AuditLog.create({
+      action: 'listing_remove',
+      userId: req.user.id,
+      metadata: { action: 'admin_remove_listing', removedListingId: listing._id }
+    });
+
+    res.json({ message: 'Listing removed by admin' });
+  } catch (error) {
+    console.error('Admin remove listing error:', error);
+    res.status(500).json({ message: 'Failed to remove listing' });
+  }
+};
+
 module.exports = {
   getAuditLogs,
   banUser,
+  getAdminListings,
+  adminRemoveListing,
 };

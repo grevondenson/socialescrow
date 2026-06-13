@@ -33,17 +33,27 @@
 - [x] Next.js middleware.ts (route protection)
 - [x] `lib/api.ts` Axios instance with 401 interceptor
 - [x] `lib/utils.ts` (formatKES, cn, formatNumber)
-- [ ] AuditLog model added
-- [ ] verified.middleware.js added
-- [ ] POST /auth/register — tested in Thunder Client
-- [ ] POST /auth/login — returns access + refresh tokens
-- [ ] POST /auth/refresh — refresh token rotation
+- [x] AuditLog model added
+- [x] requireVerifiedEmail inside auth.middleware.js added
+- [x] POST /auth/register — tested in Thunder Client
+- [x] POST /auth/login — returns access + refresh tokens (cookie)
+- [x] POST /auth/refresh — refresh token rotation
 - [ ] Email verification service (Nodemailer)
-- [ ] GET /auth/verify/:token — tested
+- [x] GET /auth/verify/:token — tested
 - [ ] Register page UI (Next.js)
 - [ ] Login page UI (Next.js)
 - [ ] Protected route working end-to-end
 - [ ] Minimal admin JSON endpoints (fraud-flags, disputes, audit-log, ban)
+
+### Phase 2 — Listings & Feed
+- [x] Cloudinary service & Multer upload middleware
+- [x] Listings API (CRUD, Search, Filtering)
+- [x] Atlas Search aggregation pipeline (`$search`)
+- [x] Next.js infinite scroll marketplace feed (`app/page.tsx`)
+- [x] Listing detail RSC page (`app/listing/[id]/page.tsx`)
+- [x] Listing creation form with FormData (`app/listing/create/page.tsx`)
+- [x] React Query (`useInfiniteQuery`) integration
+- [ ] Admin dashboard connection
 
 ---
 
@@ -437,14 +447,14 @@ _None at project start — update as you build_
 ## Next Session Goals
 
 **Monday 8 June — Session 1**
-1. Run `setup.sh`, verify both servers boot clean
-2. Add `AuditLog` model to server/src/models/
-3. Add `verified.middleware.js` to server/src/middleware/
-4. Update `User.model.js` with kycName, kycPhone, kycVerified, sellerTier fields
-5. Test `POST /api/auth/register` in Thunder Client — verify wallet auto-created
-6. Test `POST /api/auth/login` — confirm access token + refresh cookie returned
-7. Update this file, write LEARNINGS.md Day 1 entry
-8. Commit: `feat(auth): add user registration and dual-token login`
+1. [x] Run `setup.sh`, verify both servers boot clean
+2. [x] Add `AuditLog` model to server/src/models/
+3. [x] Add `requireVerifiedEmail` to auth.middleware.js
+4. [x] Update `User.model.js` with kycName, kycPhone, kycVerified, sellerTier fields
+5. [x] Test `POST /api/auth/register` in Thunder Client — verify wallet auto-created
+6. [x] Test `POST /api/auth/login` — confirm access token + refresh cookie returned
+7. [ ] Update this file, write LEARNINGS.md Day 1 entry
+8. [ ] Commit: `feat(auth): add user registration and dual-token login`
 
 ---
 

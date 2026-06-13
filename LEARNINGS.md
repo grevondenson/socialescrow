@@ -167,3 +167,39 @@
 
 ---
 
+## Entry 3 — 12 June 2026
+**Phase**: 2 — Listings & Feed  
+**Focus**: Cloudinary uploads, Atlas Search, and Next.js React Query feed
+
+### ✅ What I Built
+
+**Backend & API**
+- `upload.middleware.js` utilizing `multer` with memory storage to handle multipart/form-data.
+- `cloudinary.service.js` utilizing `streamifier` to pipe buffers directly to Cloudinary with `{ fetch_format: 'auto' }` for optimized delivery.
+- CRUD endpoints for Listings (Create, Read, Update, Delete) with protection gates and Audit logging.
+
+**Search & Database**
+- Replaced native Mongoose `$text` with MongoDB Atlas Search using the `$search` aggregation pipeline stage.
+- Built a robust aggregation pipeline that combines `$search`, `$match` (for platform/price filters), `$sort`, and `$facet` (for reliable pagination counts).
+
+**Frontend & UX**
+- Integrated `@tanstack/react-query` with `useInfiniteQuery` for state management of the marketplace feed.
+- Created `ListingCard` and `FilterSidebar` components with debounced search.
+- Used `react-intersection-observer` to seamlessly load the next page of listings as the user scrolls.
+- Built the individual listing page (`app/listing/[id]`) as a Next.js Server Component (RSC) to maximize SEO and first-load performance.
+
+### 🔍 What Surprised Me
+- **Cloudinary streamifier**: Uploading buffers directly from memory to Cloudinary is incredibly efficient and avoids local disk I/O bottlenecks.
+- **fetch_format: 'auto'**: Applying this simple parameter drastically reduces image payload sizes (e.g., a 2MB PNG drops to ~400KB WebP automatically), which is massive for 3G mobile users.
+- **Atlas Search Integration**: Using `$search` in an aggregation pipeline is slightly more verbose than Mongoose `find({ $text: ... })`, but infinitely more powerful for fuzzy matching.
+
+### 💡 What I'd Do Differently
+- **Atlas Index Automation**: Currently requires manual setup in the Atlas UI. Could explore automating this via the MongoDB Atlas Admin API.
+- **Skeletons**: Add dedicated skeleton loading states for individual cards rather than a generic spinner for the entire feed grid.
+
+### 🧰 Resources That Helped
+- React Query documentation on `useInfiniteQuery`.
+- Cloudinary Node SDK `upload_stream` documentation.
+- MongoDB Atlas Search documentation on dynamic mapping.
+
+---

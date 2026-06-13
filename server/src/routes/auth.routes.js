@@ -8,5 +8,6 @@ router.post('/login', loginLimiter, authCtrl.login);
 router.get('/me', protect, authCtrl.getMe);
 router.get('/verify/:token', authCtrl.verifyEmail);
 router.post('/refresh', authCtrl.refreshToken);
+router.post('/logout', authCtrl.logout);
 
 module.exports = router;

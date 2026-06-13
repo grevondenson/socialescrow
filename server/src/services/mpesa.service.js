@@ -1,17 +1,30 @@
 const User = require('../models/User.model');
+const AuditLog = require('../models/AuditLog.model');
 
 const handleKYCWebhook = async (req, res) => {
   try {
-    const { userId, kycStatus, kycData } = req.body;
+    // Daraja sends MSISDN, FirstName, LastName
+    const { MSISDN, FirstName, LastName, kycStatus, kycData } = req.body;
 
-    if (!userId || !kycStatus) {
-      return res.status(400).json({ message: 'userId and kycStatus required' });
+    if (!MSISDN || !kycStatus) {
+      return res.status(400).json({ message: 'MSISDN and kycStatus required' });
+    }
+
+    // Lookup user by phone
+    const user = await User.findOne({ kycPhone: MSISDN });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
     }
 
     if (kycStatus === 'verified') {
-      await User.findByIdAndUpdate(userId, {
-        kycVerified: true,
-        kycVerifiedAt: new Date(),
+      user.kycVerified = true;
+      user.kycVerifiedAt = new Date();
+      await user.save();
+
+      await AuditLog.create({
+        action: 'kyc_verified',
+        userId: user._id,
+        metadata: { MSISDN, kycData }
       });
 
       res.json({
@@ -19,6 +32,12 @@ const handleKYCWebhook = async (req, res) => {
         kycData,
       });
     } else if (kycStatus === 'rejected') {
+      await AuditLog.create({
+        action: 'kyc_mismatch',
+        userId: user._id,
+        metadata: { MSISDN, reason: kycData?.reason }
+      });
+
       res.status(400).json({
         message: 'KYC verification failed',
         reason: kycData?.reason,
