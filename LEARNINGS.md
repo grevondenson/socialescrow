@@ -167,39 +167,34 @@
 
 ---
 
-## Entry 3 — 12 June 2026
-**Phase**: 2 — Listings & Feed  
-**Focus**: Cloudinary uploads, Atlas Search, and Next.js React Query feed
+## Entry 4 — 17 June 2026
+**Phase**: 3 — Trade Initiation and Escrow Flow  
+**Focus**: Atomic state transitions, secure credential vaulting, and sensitive data memory management.
 
 ### ✅ What I Built
+**Secure Credential Vault**
+- **AES-256-CBC Encryption**: Built a robust `vault.service.js` that uses a 32-byte hex key. It generates a unique random 16-byte IV for every encryption call, ensuring identical plaintext results in unique ciphertext.
+- **Startup Security Guard**: Implemented a fatal startup check in `index.js` to validate the `VAULT_ENCRYPTION_KEY` length before the server starts, preventing silent failures.
+- **Atomic One-Time Reveal**: Used MongoDB's `findOneAndUpdate({ revealed: false })` to ensure credentials can only be revealed exactly once.
 
-**Backend & API**
-- `upload.middleware.js` utilizing `multer` with memory storage to handle multipart/form-data.
-- `cloudinary.service.js` utilizing `streamifier` to pipe buffers directly to Cloudinary with `{ fetch_format: 'auto' }` for optimized delivery.
-- CRUD endpoints for Listings (Create, Read, Update, Delete) with protection gates and Audit logging.
+**Trade Lifecycle & Escrow Logic**
+- **Race Condition Prevention**: `initiateTrade` now uses an atomic status update on the `Listing` model to prevent multiple buyers from locking the same account simultaneously.
+- **Explicit Release Flow**: Sellers must now explicitly click "Release" after submission before the buyer can reveal, adding a critical human-in-the-loop security layer.
+- **Mock Financial Trail**: The `mockPayment` endpoint simulates a full financial transaction by creating an `EscrowRecord` and two `LedgerEntry` records (`DEPOSIT` and `ESCROW_LOCK`) with `[MOCK]` prefixes, preparing the ground for Phase 4 reconciliation.
 
-**Search & Database**
-- Replaced native Mongoose `$text` with MongoDB Atlas Search using the `$search` aggregation pipeline stage.
-- Built a robust aggregation pipeline that combines `$search`, `$match` (for platform/price filters), `$sort`, and `$facet` (for reliable pagination counts).
-
-**Frontend & UX**
-- Integrated `@tanstack/react-query` with `useInfiniteQuery` for state management of the marketplace feed.
-- Created `ListingCard` and `FilterSidebar` components with debounced search.
-- Used `react-intersection-observer` to seamlessly load the next page of listings as the user scrolls.
-- Built the individual listing page (`app/listing/[id]`) as a Next.js Server Component (RSC) to maximize SEO and first-load performance.
+**Frontend Security & UX**
+- **Sensitive Data Wipe**: Implemented a strict `useEffect` cleanup in the Trade Room that wipes the decrypted credentials from React state immediately upon the 60s timer expiry or if the user unmounts/navigates away.
+- **Status Polling**: Integrated a 5-second `refetchInterval` with `refetchOnWindowFocus: false` to ensure the UI stays in sync without overwhelming the network.
 
 ### 🔍 What Surprised Me
-- **Cloudinary streamifier**: Uploading buffers directly from memory to Cloudinary is incredibly efficient and avoids local disk I/O bottlenecks.
-- **fetch_format: 'auto'**: Applying this simple parameter drastically reduces image payload sizes (e.g., a 2MB PNG drops to ~400KB WebP automatically), which is massive for 3G mobile users.
-- **Atlas Search Integration**: Using `$search` in an aggregation pipeline is slightly more verbose than Mongoose `find({ $text: ... })`, but infinitely more powerful for fuzzy matching.
+- **Mongoose enum limitations**: Discovered that Mongoose doesn't throw errors for invalid enum values during updates unless `runValidators: true` is set (or managed manually). This led to proactively updating the `AuditLog` and `FraudFlag` enums to ensure no silent data loss during reveal attempts.
+- **Atomic Reveal Complexity**: Implementing a truly atomic reveal that also triggers a `FraudFlag` on the *second* attempt required careful sequencing of `findOneAndUpdate` and fallback `findOne` checks.
 
 ### 💡 What I'd Do Differently
-- **Atlas Index Automation**: Currently requires manual setup in the Atlas UI. Could explore automating this via the MongoDB Atlas Admin API.
-- **Skeletons**: Add dedicated skeleton loading states for individual cards rather than a generic spinner for the entire feed grid.
+- **Error Handling**: Could implement a custom `VaultError` class to distinguish between "not found", "already revealed", and "unauthorized" at the service level for cleaner controller code.
+- **Refetch Interval**: Might consider slowing down polling to 10s if the tab is inactive (Page Visibility API) to save resources.
 
 ### 🧰 Resources That Helped
-- React Query documentation on `useInfiniteQuery`.
-- Cloudinary Node SDK `upload_stream` documentation.
-- MongoDB Atlas Search documentation on dynamic mapping.
-
----
+- Node.js `crypto` module documentation.
+- MongoDB `findOneAndUpdate` atomic operators.
+- React Query `refetchInterval` patterns for real-time UIs without WebSockets.
