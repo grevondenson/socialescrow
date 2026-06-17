@@ -8,10 +8,10 @@
 
 | Field | Value |
 |---|---|
-| **Active Phase** | Phase 1 — Auth + KYC |
-| **Week** | Week 1 |
+| **Active Phase** | Phase 4 — Wallet & Ledger |
+| **Week** | Week 2 |
 | **Start date** | 8 June 2026 |
-| **Current branch** | `feature/phase-1-auth` |
+| **Current branch** | `feature/phase-3-escrow` |
 | **Server** | http://localhost:5000 |
 | **Client** | http://localhost:3000 |
 | **DB** | MongoDB Atlas — `socialescrow` |
@@ -55,9 +55,22 @@
 - [x] React Query (`useInfiniteQuery`) integration
 - [ ] Admin dashboard connection
 
----
+### Phase 3 — Trade Initiation & Escrow
+- [x] Atomic `initiateTrade` with race condition guard
+- [x] Secure `vault.service.js` (AES-256-CBC with hex key)
+- [x] Explicit `releaseCredentials` step for sellers
+- [x] Atomic `revealCredentials` with `410 Gone` + `FraudFlag` protection
+- [x] Mock payment flow creating `EscrowRecord` and `LedgerEntries`
+- [x] Frontend: New Trade Initiation page (`/trade/new`)
+- [x] Frontend: Trade Room with 5s polling and memory-wipe timer
+- [x] Startup security guard for encryption key validation
 
-## Platform Zones
+### Phase 4 — Wallet & Ledger
+- [ ] Wallet reconciliation service
+- [ ] Ledger entry validation
+- [ ] Real-time balance updates
+- [ ] Transaction history UI
+
 
 ```
 PUBLIC (no auth required)
@@ -432,9 +445,9 @@ retryCount, lastPolledAt
 - [ ] `CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET`
 - [ ] `MPESA_CONSUMER_KEY/SECRET/SHORTCODE/PASSKEY`
 - [ ] `MPESA_CALLBACK_URL` — Railway public URL
-- [ ] `VAULT_ENCRYPTION_KEY` — exactly 32 chars
-- [ ] `AUTO_PAYOUT` — set to `false`
-- [ ] `CLIENT_URL` — http://localhost:3000 for dev
+- [x] `VAULT_ENCRYPTION_KEY` — 64 hex characters (32 bytes)
+- [x] `AUTO_PAYOUT` — set to `false`
+- [x] `CLIENT_URL` — http://localhost:3000 for dev
 
 ---
 

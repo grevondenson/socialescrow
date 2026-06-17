@@ -7,6 +7,15 @@ const cookieParser = require('cookie-parser');
 const { connectDB } = require('./config/db');
 require('dotenv').config();
 
+// ── Security Guard ───────────────────────────────────────────
+if (process.env.NODE_ENV !== 'test') {
+  const key = Buffer.from(process.env.VAULT_ENCRYPTION_KEY || '', 'hex');
+  if (key.length !== 32) {
+    console.error('❌ FATAL: VAULT_ENCRYPTION_KEY must be a 64-character hex string (32 bytes)');
+    process.exit(1);
+  }
+}
+
 const app = express();
 const server = http.createServer(app);
 

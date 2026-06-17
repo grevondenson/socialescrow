@@ -7,7 +7,8 @@ const fraudFlagSchema = new mongoose.Schema({
     type: String,
     enum: [
       'NEW_ACCOUNT_HIGH_VALUE','MULTIPLE_DISPUTES','DUPLICATE_PHONE',
-      'IP_MISMATCH','RAPID_LISTINGS','SUSPICIOUS_CANCEL','WEBHOOK_MISMATCH'
+      'IP_MISMATCH','RAPID_LISTINGS','SUSPICIOUS_CANCEL','WEBHOOK_MISMATCH',
+      'VAULT_DOUBLE_REVEAL'
     ],
   },
   riskScore:  { type: Number, default: 0 },
