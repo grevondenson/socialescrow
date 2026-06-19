@@ -1,9 +1,8 @@
 const Trade = require('../models/Trade.model');
 const Listing = require('../models/Listing.model');
-const EscrowRecord = require('../models/EscrowRecord.model');
-const LedgerEntry = require('../models/LedgerEntry.model');
-const Wallet = require('../models/Wallet.model');
 const CredentialVault = require('../models/CredentialVault.model');
+const walletService = require('../services/wallet.service');
+const escrowService = require('../services/escrow.service');
 const mongoose = require('mongoose');
 
 /**
@@ -90,13 +89,14 @@ exports.getTrade = async (req, res, next) => {
 };
 
 /**
- * Mock payment for Phase 3 testing
+ * Mock payment for testing (migrated to real wallet/escrow services in Phase 4)
  * PATCH /api/trades/:id/mock-payment
  */
 exports.mockPayment = async (req, res, next) => {
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
+    // 1. Atomically move trade from payment_window → paid
     const trade = await Trade.findOneAndUpdate(
       { _id: req.params.id, status: 'payment_window' },
       { $set: { status: 'paid' } },
@@ -104,58 +104,22 @@ exports.mockPayment = async (req, res, next) => {
     );
 
     if (!trade) {
-      throw new Error('Trade not found or not in payment window');
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ message: 'Trade not found or not in payment window' });
     }
 
-    // Create EscrowRecord
-    await EscrowRecord.create([{
-      trade: trade._id,
-      buyer: trade.buyer,
-      seller: trade.seller,
-      grossAmount: trade.amountKes,
-      platformFee: trade.platformFeeKes,
-      sellerPayout: trade.sellerPayoutKes,
-      status: 'locked'
-    }], { session });
+    // 2. Credit buyer's wallet (mock deposit) — creates DEPOSIT LedgerEntry with real balances
+    await walletService.credit(
+      trade.buyer,
+      trade.amountKes,
+      'DEPOSIT',
+      { tradeId: trade._id, note: '[MOCK] Simulated M-Pesa deposit (Phase 4)' },
+      session
+    );
 
-    // Update Buyer Wallet (Mock deposit + lock)
-    const wallet = await Wallet.findOne({ user: trade.buyer }).session(session);
-    if (!wallet) throw new Error('Buyer wallet not found');
-
-    const balanceBeforeDeposit = wallet.availableBalance;
-    wallet.availableBalance += trade.amountKes;
-    wallet.totalDeposited += trade.amountKes;
-    const balanceAfterDeposit = wallet.availableBalance;
-
-    // Create DEPOSIT ledger
-    await LedgerEntry.create([{
-      trade: trade._id,
-      user: trade.buyer,
-      type: 'DEPOSIT',
-      amountKes: trade.amountKes,
-      balanceBefore: balanceBeforeDeposit,
-      balanceAfter: balanceAfterDeposit,
-      note: '[MOCK] Mock deposit for Phase 3'
-    }], { session });
-
-    // Lock funds
-    const balanceBeforeLock = wallet.availableBalance;
-    wallet.availableBalance -= trade.amountKes;
-    wallet.lockedInEscrow += trade.amountKes;
-    const balanceAfterLock = wallet.availableBalance;
-
-    // Create ESCROW_LOCK ledger
-    await LedgerEntry.create([{
-      trade: trade._id,
-      user: trade.buyer,
-      type: 'ESCROW_LOCK',
-      amountKes: trade.amountKes,
-      balanceBefore: balanceBeforeLock,
-      balanceAfter: balanceAfterLock,
-      note: '[MOCK] Mock escrow lock for Phase 3'
-    }], { session });
-
-    await wallet.save({ session });
+    // 3. Lock funds into escrow — creates ESCROW_LOCK LedgerEntry + EscrowRecord + PlatformAccount update
+    await escrowService.lock(trade._id.toString(), session);
 
     await session.commitTransaction();
     res.json(trade);

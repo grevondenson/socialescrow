@@ -18,5 +18,10 @@ const ledgerSchema = new mongoose.Schema({
 // Ledger is append-only — never update entries
 ledgerSchema.pre('findOneAndUpdate', () => { throw new Error('Ledger entries are immutable'); });
 ledgerSchema.pre('updateOne',        () => { throw new Error('Ledger entries are immutable'); });
+ledgerSchema.pre('updateMany',       () => { throw new Error('Ledger entries are immutable'); });
+
+// Compound indexes for reconciliation aggregation
+ledgerSchema.index({ user: 1, type: 1, createdAt: -1 });
+ledgerSchema.index({ trade: 1 });
 
 module.exports = mongoose.model('LedgerEntry', ledgerSchema);
