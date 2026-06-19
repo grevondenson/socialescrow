@@ -1,5 +1,9 @@
 const router = require('express').Router();
-// TODO: import controller and wire routes
-// const ctrl = require('../controllers/wallet.controller');
-router.get('/', (req, res) => res.json({ route: 'wallet', status: 'stub' }));
+const walletCtrl = require('../controllers/wallet.controller');
+const { protect } = require('../middleware/auth.middleware');
+
+router.get('/',          protect, walletCtrl.getWallet);
+router.get('/ledger',    protect, walletCtrl.getLedgerHistory);
+router.get('/reconcile', protect, walletCtrl.reconcileMyWallet);
+
 module.exports = router;

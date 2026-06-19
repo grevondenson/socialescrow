@@ -1,0 +1,180 @@
+.page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+
+.header {
+  margin-bottom: 28px;
+}
+
+.heading {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0 0 4px 0;
+}
+
+.subheading {
+  font-size: 0.9rem;
+  color: #64748b;
+  margin: 0;
+}
+
+/* Filter bar */
+.filterBar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.filterLabel {
+  font-size: 0.875rem;
+  color: #475569;
+  font-weight: 500;
+}
+
+.filterSelect {
+  padding: 8px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 0.875rem;
+  color: #334155;
+  cursor: pointer;
+  outline: none;
+}
+
+.filterSelect:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+/* Table */
+.tableWrapper {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th {
+  background: #f8fafc;
+  padding: 12px 16px;
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.table td {
+  padding: 14px 16px;
+  font-size: 0.875rem;
+  color: #334155;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: middle;
+}
+
+.table tr:last-child td {
+  border-bottom: none;
+}
+
+.table tr:hover td {
+  background: #f8fafc;
+}
+
+/* Type badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge.DEPOSIT        { background: #dcfce7; color: #15803d; }
+.badge.ESCROW_LOCK    { background: #fef3c7; color: #b45309; }
+.badge.REFUND         { background: #dbeafe; color: #1d4ed8; }
+.badge.ESCROW_RELEASE { background: #ccfbf1; color: #0f766e; }
+.badge.SELLER_PAYOUT  { background: #ccfbf1; color: #0f766e; }
+.badge.PLATFORM_FEE   { background: #f1f5f9; color: #475569; }
+.badge.DISPUTE_HOLD   { background: #fee2e2; color: #b91c1c; }
+
+/* Amount */
+.amountCredit { color: #16a34a; font-weight: 600; }
+.amountDebit  { color: #dc2626; font-weight: 600; }
+.amountNeutral { color: #475569; font-weight: 500; }
+
+/* Balance */
+.balance {
+  font-variant-numeric: tabular-nums;
+  color: #0f172a;
+}
+
+/* Empty / loading */
+.emptyRow td {
+  text-align: center;
+  padding: 48px;
+  color: #94a3b8;
+}
+
+.skeletonRow td span {
+  display: block;
+  height: 14px;
+  background: #f1f5f9;
+  border-radius: 4px;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Load more */
+.loadMoreWrapper {
+  display: flex;
+  justify-content: center;
+  padding: 24px;
+}
+
+.loadMoreBtn {
+  padding: 10px 28px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #334155;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.loadMoreBtn:hover:not(:disabled) {
+  background: #f8fafc;
+}
+
+.loadMoreBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.errorText {
+  text-align: center;
+  color: #ef4444;
+  padding: 24px;
+  font-size: 0.875rem;
+}
