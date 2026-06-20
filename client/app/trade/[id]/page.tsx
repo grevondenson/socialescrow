@@ -4,11 +4,13 @@ import { useParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../lib/api';
 import { formatKES } from '../../../lib/utils';
+import { useInvalidateWallet } from '../../../lib/services/wallet';
 import React, { useState, useEffect } from 'react';
 
 export default function TradeRoomPage() {
   const { id } = useParams();
   const queryClient = useQueryClient();
+  const invalidateWallet = useInvalidateWallet();
   const [decrypted, setDecrypted] = useState<string | null>(null);
   const [timer, setTimer] = useState(0);
   const [credentialsInput, setCredentialsInput] = useState('');
@@ -36,20 +38,27 @@ export default function TradeRoomPage() {
   // 3. Mutations
   const mockPaymentMutation = useMutation({
     mutationFn: () => api.patch(`/trades/${id}/mock-payment`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['trade', id] })
+    onSuccess: () => {
+      invalidateWallet();
+      queryClient.invalidateQueries({ queryKey: ['trade', id] });
+    }
   });
 
   const submitVaultMutation = useMutation({
     mutationFn: () => api.post(`/trades/${id}/vault`, { credentials: credentialsInput }),
     onSuccess: () => {
       setCredentialsInput('');
+      invalidateWallet();
       queryClient.invalidateQueries({ queryKey: ['trade', id] });
     }
   });
 
   const releaseMutation = useMutation({
     mutationFn: () => api.patch(`/trades/${id}/release`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['trade', id] })
+    onSuccess: () => {
+      invalidateWallet();
+      queryClient.invalidateQueries({ queryKey: ['trade', id] });
+    }
   });
 
   const revealMutation = useMutation({

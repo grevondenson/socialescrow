@@ -76,11 +76,13 @@ exports.getTrade = async (req, res, next) => {
 
     // Check for vault existence (metadata for UI)
     const vault = await CredentialVault.findOne({ trade: trade._id });
+    const vaultStatus = !vault ? 'missing' : vault.revealed ? 'revealed' : 'stored';
 
     // Convert to object to add virtual fields
     const tradeObj = trade.toObject();
     tradeObj.hasVaultCredentials = !!vault;
     tradeObj.vaultRevealed = vault ? vault.revealed : false;
+    tradeObj.vaultStatus = vaultStatus;
 
     res.json(tradeObj);
   } catch (error) {

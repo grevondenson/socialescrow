@@ -1,4 +1,5 @@
 import { api } from '../api';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 export interface WalletData {
   _id: string;
@@ -62,3 +63,21 @@ export const fetchLedger = (
 
 export const reconcileWallet = () =>
   api.get('/wallet/reconcile').then((r) => r.data);
+
+export function useWallet() {
+  return useQuery({
+    queryKey: ['wallet'],
+    queryFn: fetchWallet,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useInvalidateWallet() {
+  const queryClient = useQueryClient();
+
+  return () => {
+    queryClient.invalidateQueries({ queryKey: ['wallet'] });
+    queryClient.invalidateQueries({ queryKey: ['ledger'] });
+  };
+}

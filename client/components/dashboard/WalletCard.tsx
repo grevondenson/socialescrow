@@ -1,18 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { useQuery } from '@tanstack/react-query';
-import { fetchWallet } from '../../lib/services/wallet';
+import { useWallet } from '../../lib/services/wallet';
 import { formatKES } from '../../lib/utils';
 import styles from './WalletCard.module.css';
 
 export default function WalletCard() {
-  const { data: wallet, isLoading, isError } = useQuery({
-    queryKey: ['wallet'],
-    queryFn: fetchWallet,
-    refetchInterval: 30_000,
-    refetchOnWindowFocus: false,
-  });
+  const { data: wallet, isLoading, isError } = useWallet();
 
   return (
     <div className={styles.card}>

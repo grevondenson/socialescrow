@@ -8,12 +8,12 @@ const FraudFlag = require('../models/FraudFlag.model');
  * Entry types that increase the user's net holdings.
  * DEPOSIT is the only type that brings new money in.
  */
-const CREDIT_TYPES = ['DEPOSIT'];
+const CREDIT_TYPES = ['DEPOSIT', 'SELLER_PAYOUT'];
 
 /**
  * Entry types that decrease the user's net holdings.
  */
-const DEBIT_TYPES = ['SELLER_PAYOUT', 'PLATFORM_FEE'];
+const DEBIT_TYPES = ['ESCROW_RELEASE'];
 
 /**
  * Reconcile a user's wallet against their ledger history.
@@ -29,13 +29,13 @@ const reconcileWallet = async (userId) => {
 
   // Aggregate credit totals
   const creditAgg = await LedgerEntry.aggregate([
-    { $match: { user: wallet._id, type: { $in: CREDIT_TYPES } } },
+    { $match: { user: wallet.user, type: { $in: CREDIT_TYPES } } },
     { $group: { _id: null, total: { $sum: '$amountKes' } } }
   ]);
 
   // Aggregate debit totals
   const debitAgg = await LedgerEntry.aggregate([
-    { $match: { user: wallet._id, type: { $in: DEBIT_TYPES } } },
+    { $match: { user: wallet.user, type: { $in: DEBIT_TYPES } } },
     { $group: { _id: null, total: { $sum: '$amountKes' } } }
   ]);
 

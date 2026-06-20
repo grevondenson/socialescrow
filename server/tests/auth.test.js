@@ -1,35 +1,18 @@
 const request = require('supertest');
-const { MongoMemoryServer } = require('mongodb-memory-server');
-const mongoose = require('mongoose');
+
+process.env.NODE_ENV = 'test';
+process.env.JWT_SECRET = 'test-secret-key';
+process.env.REFRESH_TOKEN_SECRET = 'test-refresh-secret';
+
 const { app } = require('../src/index');
 const User = require('../src/models/User.model');
 const Wallet = require('../src/models/Wallet.model');
 const AuditLog = require('../src/models/AuditLog.model');
+const { connectTestDB, disconnectTestDB, clearCollections } = require('./setup');
 
-let mongoServer;
-
-beforeAll(async () => {
-  process.env.NODE_ENV = 'test';
-  process.env.JWT_SECRET = 'test-secret-key';
-  process.env.REFRESH_TOKEN_SECRET = 'test-refresh-secret';
-
-  mongoServer = await MongoMemoryServer.create();
-  const mongoUri = mongoServer.getUri();
-  await mongoose.connect(mongoUri);
-});
-
-afterAll(async () => {
-  await mongoose.disconnect();
-  await mongoServer.stop();
-});
-
-afterEach(async () => {
-  const collections = mongoose.connection.collections;
-  for (const key in collections) {
-    const collection = collections[key];
-    await collection.deleteMany({});
-  }
-});
+beforeAll(connectTestDB);
+afterAll(disconnectTestDB);
+afterEach(clearCollections);
 
 describe('Auth Endpoints', () => {
   describe('POST /api/auth/register', () => {
@@ -46,7 +29,9 @@ describe('Auth Endpoints', () => {
       expect(res.status).toBe(201);
       expect(res.body.message).toContain('Registration successful');
       expect(res.body.accessToken).toBeDefined();
-      expect(res.body.refreshToken).toBeDefined();
+      expect(res.headers['set-cookie']).toEqual(
+        expect.arrayContaining([expect.stringContaining('refreshToken=')])
+      );
       expect(res.body.user.email).toBe('john@example.com');
       expect(res.body.user.isVerified).toBe(false);
 
@@ -123,7 +108,9 @@ describe('Auth Endpoints', () => {
       expect(res.status).toBe(200);
       expect(res.body.message).toContain('Login successful');
       expect(res.body.accessToken).toBeDefined();
-      expect(res.body.refreshToken).toBeDefined();
+      expect(res.headers['set-cookie']).toEqual(
+        expect.arrayContaining([expect.stringContaining('refreshToken=')])
+      );
       expect(res.body.user.email).toBe('test@example.com');
 
       const auditLog = await AuditLog.findOne({ action: 'login' });
@@ -206,7 +193,7 @@ describe('Auth Endpoints', () => {
           confirmPassword: 'Password123!',
         });
 
-      const user = await User.findOne({ email: 'verify@example.com' });
+      const user = await User.findOne({ email: 'verify@example.com' }).select('+verifyToken');
       userId = user._id;
       verifyToken = user.verifyToken;
     });
@@ -261,7 +248,7 @@ describe('Auth Endpoints', () => {
     });
 
     it('should allow listing creation after email verification', async () => {
-      const user = await User.findById(userId);
+      const user = await User.findById(userId).select('+verifyToken');
       const verifyRes = await request(app)
         .get(`/api/auth/verify/${user.verifyToken}`);
 
@@ -270,17 +257,24 @@ describe('Auth Endpoints', () => {
       const listingRes = await request(app)
         .post('/api/listings')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ title: 'Test Listing' });
+        .send({
+          platform: 'Instagram',
+          followers: 10000,
+          niche: 'Fitness',
+          priceKes: 50000,
+          accountAgeYears: 2,
+        });
 
       expect(listingRes.status).toBe(201);
     });
   });
 
   describe('Token Refresh', () => {
-    let refreshToken;
+    let agent;
 
     beforeEach(async () => {
-      const registerRes = await request(app)
+      agent = request.agent(app);
+      await agent
         .post('/api/auth/register')
         .send({
           fullName: 'Refresh User',
@@ -288,24 +282,21 @@ describe('Auth Endpoints', () => {
           password: 'Password123!',
           confirmPassword: 'Password123!',
         });
-
-      refreshToken = registerRes.body.refreshToken;
     });
 
     it('should refresh access token', async () => {
-      const res = await request(app)
-        .post('/api/auth/refresh')
-        .send({ refreshToken });
+      const res = await agent.post('/api/auth/refresh');
 
       expect(res.status).toBe(200);
       expect(res.body.accessToken).toBeDefined();
-      expect(res.body.refreshToken).toBeDefined();
+      expect(res.headers['set-cookie']).toEqual(
+        expect.arrayContaining([expect.stringContaining('refreshToken=')])
+      );
     });
 
     it('should not refresh with invalid token', async () => {
       const res = await request(app)
-        .post('/api/auth/refresh')
-        .send({ refreshToken: 'invalid-token' });
+        .post('/api/auth/refresh');
 
       expect(res.status).toBe(401);
     });

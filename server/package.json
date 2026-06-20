@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
-    "test": "jest --forceExit --detectOpenHandles"
+    "test": "jest --forceExit --detectOpenHandles",
+    "e2e:proof": "node scripts/e2e-phase1-4-local.js",
+    "check:env": "node scripts/check-env.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

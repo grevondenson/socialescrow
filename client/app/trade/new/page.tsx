@@ -4,12 +4,14 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../lib/api';
 import { formatKES } from '../../../lib/utils';
+import { useInvalidateWallet } from '../../../lib/services/wallet';
 import React, { Suspense } from 'react';
 
 function NewTradeContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const invalidateWallet = useInvalidateWallet();
   const listingId = searchParams.get('listingId');
 
   const { data: listing, isLoading, error } = useQuery({
@@ -27,6 +29,7 @@ function NewTradeContent() {
       return res.data;
     },
     onSuccess: (data) => {
+      invalidateWallet();
       queryClient.invalidateQueries({ queryKey: ['listings'] });
       router.push(`/trade/${data._id}`);
     },

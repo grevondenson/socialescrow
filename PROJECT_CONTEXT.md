@@ -66,10 +66,10 @@
 - [x] Startup security guard for encryption key validation
 
 ### Phase 4 — Wallet & Ledger
-- [ ] Wallet reconciliation service
-- [ ] Ledger entry validation
-- [ ] Real-time balance updates
-- [ ] Transaction history UI
+- [x] Wallet reconciliation service
+- [x] Ledger entry validation (immutable, balanceBefore/After at write time)
+- [x] Wallet balance refresh (useWallet 30s poll + invalidateQueries on trade actions)
+- [x] Transaction history UI
 
 
 ```
