@@ -1,5 +1,15 @@
 const router = require('express').Router();
-// TODO: import controller and wire routes
-// const ctrl = require('../controllers/mpesa.controller');
-router.get('/', (req, res) => res.json({ route: 'mpesa', status: 'stub' }));
+const mpesaCtrl = require('../controllers/mpesa.controller');
+const { protect, requireVerifiedEmail, requireRole } = require('../middleware/auth.middleware');
+
+router.post('/stk-push', protect, requireVerifiedEmail, mpesaCtrl.triggerStkPush);
+router.post('/manual-payment', protect, requireVerifiedEmail, mpesaCtrl.submitManualPayment);
+router.get('/manual-payment/pending', protect, requireRole('admin'), mpesaCtrl.getPendingManualPayments);
+router.patch('/manual-payment/:id/verify', protect, requireRole('admin'), mpesaCtrl.verifyManualPayment);
+
+router.post('/webhook/stk-push', mpesaCtrl.stkPushWebhook);
+router.post('/webhook/kyc', mpesaCtrl.kycWebhook);
+
+router.get('/', (req, res) => res.json({ route: 'mpesa', status: 'live' }));
+
 module.exports = router;

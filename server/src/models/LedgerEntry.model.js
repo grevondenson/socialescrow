@@ -16,6 +16,12 @@ const ledgerSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 // Ledger is append-only — never update entries
+ledgerSchema.pre('save', function(next) {
+  if (!this.isNew) {
+    return next(new Error('Ledger entries are immutable'));
+  }
+  next();
+});
 ledgerSchema.pre('findOneAndUpdate', () => { throw new Error('Ledger entries are immutable'); });
 ledgerSchema.pre('updateOne',        () => { throw new Error('Ledger entries are immutable'); });
 ledgerSchema.pre('updateMany',       () => { throw new Error('Ledger entries are immutable'); });

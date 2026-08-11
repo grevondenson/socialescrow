@@ -34,6 +34,12 @@ app.use('/api/wallet',   require('./routes/wallet.routes'));
 app.use('/api/mpesa',    require('./routes/mpesa.routes'));
 app.use('/api/admin',    require('./routes/admin.routes'));
 
+const { startMpesaWorker } = require('./jobs/mpesa.job');
+
+startMpesaWorker().catch((err) => {
+  console.error('Failed to start M-Pesa BullMQ worker:', err.message || err);
+});
+
 // ── Health check ─────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok', env: process.env.NODE_ENV }));
 

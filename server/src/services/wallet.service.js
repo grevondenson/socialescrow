@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const Wallet = require('../models/Wallet.model');
 const LedgerEntry = require('../models/LedgerEntry.model');
+const PlatformAccount = require('../models/PlatformAccount.model');
 
 /**
  * Custom error for insufficient funds
@@ -224,6 +225,11 @@ const unlockFunds = async (userId, amountKes, tradeId, session = null) => {
 const creditPendingPayout = async (userId, amountKes, tradeId, session = null) => {
   return _runInSession(session, async (sess) => {
     const opts = { session: sess };
+
+    const platformAccount = await PlatformAccount.findOne({}, null, opts);
+    if (platformAccount && platformAccount.payoutsEnabled === false) {
+      throw new Error('Payouts are currently disabled due to a platform integrity issue');
+    }
 
     const oldWallet = await Wallet.findOneAndUpdate(
       { user: userId },

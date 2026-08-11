@@ -1,6 +1,7 @@
 const Trade = require('../models/Trade.model');
 const Listing = require('../models/Listing.model');
 const CredentialVault = require('../models/CredentialVault.model');
+const MpesaTransaction = require('../models/MpesaTransaction.model');
 const walletService = require('../services/wallet.service');
 const escrowService = require('../services/escrow.service');
 const mongoose = require('mongoose');
@@ -81,6 +82,19 @@ exports.getTrade = async (req, res, next) => {
     const tradeObj = trade.toObject();
     tradeObj.hasVaultCredentials = !!vault;
     tradeObj.vaultRevealed = vault ? vault.revealed : false;
+
+    const pendingManualPayment = await MpesaTransaction.findOne({
+      trade: trade._id,
+      'manualPayment.status': 'submitted',
+      status: 'pending',
+    }).select('manualPayment.referenceCode manualPayment.status manualPayment.submittedAt manualPayment.notes');
+
+    tradeObj.manualPayment = pendingManualPayment ? {
+      status: pendingManualPayment.manualPayment.status,
+      referenceCode: pendingManualPayment.manualPayment.referenceCode,
+      submittedAt: pendingManualPayment.manualPayment.submittedAt,
+      notes: pendingManualPayment.manualPayment.notes,
+    } : null;
 
     res.json(tradeObj);
   } catch (error) {

@@ -12,6 +12,12 @@ export default function TradeRoomPage() {
   const [decrypted, setDecrypted] = useState<string | null>(null);
   const [timer, setTimer] = useState(0);
   const [credentialsInput, setCredentialsInput] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [stkMessage, setStkMessage] = useState('');
+  const [stkError, setStkError] = useState('');
+  const [manualReferenceCode, setManualReferenceCode] = useState('');
+  const [manualError, setManualError] = useState('');
+  const [manualSuccess, setManualSuccess] = useState('');
   
   // 1. Fetch current user
   const { data: user } = useQuery({
@@ -29,16 +35,11 @@ export default function TradeRoomPage() {
       const res = await api.get(`/trades/${id}`);
       return res.data;
     },
-    refetchInterval: 5000, // 5s polling
+    refetchInterval: 3000, // 3s polling
     refetchOnWindowFocus: false,
   });
 
   // 3. Mutations
-  const mockPaymentMutation = useMutation({
-    mutationFn: () => api.patch(`/trades/${id}/mock-payment`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['trade', id] })
-  });
-
   const submitVaultMutation = useMutation({
     mutationFn: () => api.post(`/trades/${id}/vault`, { credentials: credentialsInput }),
     onSuccess: () => {
@@ -52,6 +53,43 @@ export default function TradeRoomPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['trade', id] })
   });
 
+  const stkPushMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post('/mpesa/stk-push', { tradeId: id, phoneNumber });
+      return res.data;
+    },
+    onSuccess: () => {
+      setStkMessage('STK Push sent. Check your phone and enter your M-Pesa PIN.');
+      setStkError('');
+      queryClient.invalidateQueries({ queryKey: ['trade', id] });
+    },
+    onError: (error: any) => {
+      setStkError(error.response?.data?.message || 'Failed to initiate STK Push');
+      setStkMessage('');
+    }
+  });
+
+  const submitManualPaymentMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post('/mpesa/manual-payment', {
+        tradeId: id,
+        referenceCode: manualReferenceCode,
+        phoneNumber,
+      });
+      return res.data;
+    },
+    onSuccess: () => {
+      setManualSuccess('Manual payment request submitted. Awaiting admin verification.');
+      setManualError('');
+      setManualReferenceCode('');
+      queryClient.invalidateQueries({ queryKey: ['trade', id] });
+    },
+    onError: (error: any) => {
+      setManualError(error.response?.data?.message || 'Failed to submit manual payment request');
+      setManualSuccess('');
+    }
+  });
+
   const revealMutation = useMutation({
     mutationFn: async () => {
       const res = await api.get(`/trades/${id}/vault/reveal`);
@@ -62,6 +100,12 @@ export default function TradeRoomPage() {
       setTimer(60);
     }
   });
+
+  useEffect(() => {
+    if (user?.phone) {
+      setPhoneNumber(user.phone);
+    }
+  }, [user?.phone]);
 
   // 4. Timer Logic & Cleanup
   useEffect(() => {
@@ -134,15 +178,56 @@ export default function TradeRoomPage() {
             {isBuyer && (
               <div className="space-y-4">
                 {trade.status === 'payment_window' && (
-                  <div>
-                    <p className="mb-4 text-sm text-gray-600">Please complete the payment to proceed.</p>
+                  <div className="space-y-4">
+                    <p className="mb-4 text-sm text-gray-600">Complete payment with M-Pesa to lock funds in escrow.</p>
+                    <label className="block text-sm font-medium text-slate-700">Phone number</label>
+                    <input
+                      type="tel"
+                      value={phoneNumber}
+                      onChange={(e) => setPhoneNumber(e.target.value)}
+                      placeholder="07XXXXXXXX"
+                      className="w-full rounded-md border p-3 text-sm focus:ring-2 focus:ring-blue-500"
+                    />
                     <button 
-                      onClick={() => mockPaymentMutation.mutate()}
-                      disabled={mockPaymentMutation.isPending}
+                      onClick={() => stkPushMutation.mutate()}
+                      disabled={!phoneNumber || stkPushMutation.isPending}
                       className="w-full rounded-md bg-green-600 py-2 font-bold text-white hover:bg-green-700 disabled:bg-green-300"
                     >
-                      {mockPaymentMutation.isPending ? 'Processing...' : `Mock Pay (${formatKES(trade.amountKes)})`}
+                      {stkPushMutation.isPending ? 'Sending STK Push...' : `Pay ${formatKES(trade.amountKes)} with M-Pesa`}
                     </button>
+                    {stkMessage && <p className="text-sm text-green-600">{stkMessage}</p>}
+                    {stkError && <p className="text-sm text-red-500">{stkError}</p>}
+
+                    {trade.manualPayment?.status === 'submitted' && (
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                        Manual payment request submitted. Waiting for admin verification.
+                      </div>
+                    )}
+
+                    {trade.manualPayment?.status !== 'submitted' && (
+                      <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <h3 className="mb-3 text-sm font-semibold text-slate-900">Manual payment fallback</h3>
+                        <p className="mb-3 text-sm text-slate-600">If M-Pesa STK Push fails, submit the M-Pesa reference code and our support team will verify it manually.</p>
+                        <label className="block text-sm font-medium text-slate-700">M-Pesa reference code</label>
+                        <input
+                          type="text"
+                          value={manualReferenceCode}
+                          onChange={(e) => setManualReferenceCode(e.target.value)}
+                          placeholder="e.g. AB12345XYZ"
+                          className="mt-2 w-full rounded-md border p-3 text-sm focus:ring-2 focus:ring-blue-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => submitManualPaymentMutation.mutate()}
+                          disabled={!manualReferenceCode || submitManualPaymentMutation.isPending}
+                          className="mt-3 w-full rounded-md bg-orange-600 py-2 font-bold text-white hover:bg-orange-700 disabled:bg-orange-300"
+                        >
+                          {submitManualPaymentMutation.isPending ? 'Submitting...' : 'Submit Manual Payment Request'}
+                        </button>
+                        {manualSuccess && <p className="mt-2 text-sm text-green-600">{manualSuccess}</p>}
+                        {manualError && <p className="mt-2 text-sm text-red-500">{manualError}</p>}
+                      </div>
+                    )}
                   </div>
                 )}
                 

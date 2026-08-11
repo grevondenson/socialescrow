@@ -53,7 +53,7 @@ const lock = async (tradeId, session) => {
   await PlatformAccount.findOneAndUpdate(
     {},
     { $inc: { escrowPool: trade.amountKes } },
-    opts
+    { upsert: true, new: true, setDefaultsOnInsert: true, ...opts }
   );
 };
 
@@ -72,6 +72,13 @@ const release = async (tradeId, session) => {
 
   const trade = await Trade.findById(tradeId).session(session);
   if (!trade) throw new Error('Trade not found');
+
+  const platformAccount = await PlatformAccount.findOne({}).session(session);
+  if (platformAccount && platformAccount.payoutsEnabled === false) {
+    const err = new Error('Seller payouts are temporarily disabled while platform integrity issues are investigated');
+    err.statusCode = 503;
+    throw err;
+  }
 
   if (trade.status !== 'credentials_released') {
     const err = new Error('Trade must be in credentials_released status before release');
@@ -133,7 +140,7 @@ const release = async (tradeId, session) => {
         totalVolumeProcessed: trade.amountKes,
       }
     },
-    opts
+    { upsert: true, new: true, setDefaultsOnInsert: true, ...opts }
   );
 
   // Mark EscrowRecord as released
@@ -227,7 +234,7 @@ const refund = async (tradeId, session) => {
   await PlatformAccount.findOneAndUpdate(
     {},
     { $inc: { escrowPool: -trade.amountKes } },
-    opts
+    { upsert: true, new: true, setDefaultsOnInsert: true, ...opts }
   );
 
   await EscrowRecord.findOneAndUpdate(
