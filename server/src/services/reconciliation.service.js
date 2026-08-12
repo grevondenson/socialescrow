@@ -107,33 +107,4 @@ const reconcilePlatformAccount = async () => {
   return { isBalanced, expected, actual, delta };
 };
 
-/**
- * Reconcile the platform account's escrow pool against locked EscrowRecords.
- *
- * @returns {{ isBalanced: boolean, expected: number, actual: number, delta: number }}
- */
-const reconcilePlatformAccount = async () => {
-  const platformAccount = await PlatformAccount.findOne({});
-  if (!platformAccount) throw new Error('PlatformAccount not found');
-
-  // Sum all locked escrow records
-  const agg = await EscrowRecord.aggregate([
-    { $match: { status: 'locked' } },
-    { $group: { _id: null, total: { $sum: '$grossAmount' } } }
-  ]);
-
-  const expected  = agg[0]?.total ?? 0;
-  const actual    = platformAccount.escrowPool;
-  const delta     = expected - actual;
-  const isBalanced = delta === 0;
-
-  await PlatformAccount.findOneAndUpdate(
-    {},
-    { lastReconciledAt: new Date() },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
-  );
-
-  return { isBalanced, expected, actual, delta };
-};
-
 module.exports = { reconcileWallet, reconcilePlatformAccount };

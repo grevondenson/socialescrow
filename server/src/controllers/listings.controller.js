@@ -40,7 +40,6 @@ const createListing = async (req, res) => {
       followers: Number(followers),
       niche,
       engagementRate,
-      accountAgeYears: Number(accountAgeYears),
       priceKes: Number(priceKes),
       description,
       proofScreenshots,
@@ -48,6 +47,13 @@ const createListing = async (req, res) => {
       status: 'pending_review',
       moderationStatus: 'pending',
     });
+
+    // accountAgeYears is optional; only cast when actually provided. Number(undefined)
+    // / Number('') is NaN, and Mongoose refuses to cast NaN to a Number path — which
+    // would otherwise fail every listing POST that omits this field with a 500.
+    if (accountAgeYears !== undefined && accountAgeYears !== null && accountAgeYears !== '') {
+      listing.accountAgeYears = Number(accountAgeYears);
+    }
 
     await listing.save();
 
