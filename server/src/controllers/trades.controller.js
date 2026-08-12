@@ -2,8 +2,12 @@ const Trade = require('../models/Trade.model');
 const Listing = require('../models/Listing.model');
 const CredentialVault = require('../models/CredentialVault.model');
 const MpesaTransaction = require('../models/MpesaTransaction.model');
+const Message = require('../models/Message.model');
+const Dispute = require('../models/Dispute.model');
+const AuditLog = require('../models/AuditLog.model');
 const walletService = require('../services/wallet.service');
 const escrowService = require('../services/escrow.service');
+const { emitToTrade } = require('../sockets/trade.socket');
 const mongoose = require('mongoose');
 
 /**
@@ -176,5 +180,153 @@ exports.releaseCredentials = async (req, res, next) => {
     res.json(trade);
   } catch (error) {
     next(error);
+  }
+};
+
+// ── Helper ───────────────────────────────────────────────────
+// Returns true if the authenticated user is the buyer or seller of the trade.
+const isParticipant = (trade, userId) =>
+  trade.buyer.toString() === userId || trade.seller.toString() === userId;
+
+/**
+ * List chat messages for a trade (oldest first).
+ * GET /api/trades/:id/messages
+ */
+exports.getMessages = async (req, res, next) => {
+  try {
+    const tradeId = req.params.id;
+    const trade = await Trade.findById(tradeId).select('buyer seller');
+    if (!trade) return res.status(404).json({ message: 'Trade not found' });
+
+    if (!isParticipant(trade, req.user.id)) {
+      return res.status(403).json({ message: 'Not authorized to view this trade' });
+    }
+
+    const messages = await Message.find({ trade: tradeId })
+      .sort({ createdAt: 1 })
+      .populate('sender', 'fullName');
+
+    res.json(messages);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Post a chat message to a trade. Persists to Mongo, then pushes over Socket.io.
+ * POST /api/trades/:id/messages
+ */
+exports.sendMessage = async (req, res, next) => {
+  try {
+    const tradeId = req.params.id;
+    const { content } = req.body;
+
+    if (!content || !content.trim()) {
+      return res.status(400).json({ message: 'Message content is required' });
+    }
+
+    const trade = await Trade.findById(tradeId).select('buyer seller');
+    if (!trade) return res.status(404).json({ message: 'Trade not found' });
+
+    if (!isParticipant(trade, req.user.id)) {
+      return res.status(403).json({ message: 'Not authorized to view this trade' });
+    }
+
+    const message = await Message.create({
+      trade: tradeId,
+      sender: req.user.id,
+      type: 'text',
+      content: content.trim(),
+    });
+
+    await message.populate('sender', 'fullName');
+    emitToTrade(tradeId, 'new_message', message);
+
+    res.status(201).json(message);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * A participant raises a dispute — freezes the escrow so neither side can move funds
+ * until an admin resolves it.
+ * POST /api/trades/:id/dispute
+ */
+exports.raiseDispute = async (req, res, next) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    const tradeId = req.params.id;
+    const { reason } = req.body;
+
+    if (!reason || !reason.trim()) {
+      await session.abortTransaction();
+      return res.status(400).json({ message: 'A dispute reason is required' });
+    }
+
+    const trade = await Trade.findById(tradeId).session(session);
+    if (!trade) {
+      await session.abortTransaction();
+      return res.status(404).json({ message: 'Trade not found' });
+    }
+
+    if (!isParticipant(trade, req.user.id)) {
+      await session.abortTransaction();
+      return res.status(403).json({ message: 'Not authorized to dispute this trade' });
+    }
+
+    // Funds must be locked (paid) and the sale not yet completed/cancelled.
+    if (!['paid', 'credentials_released'].includes(trade.status)) {
+      await session.abortTransaction();
+      return res.status(400).json({ message: 'Only a paid or credentials-released trade can be disputed' });
+    }
+
+    // One open dispute per trade.
+    const existing = await Dispute.findOne({ trade: tradeId, status: { $ne: 'resolved' } }).session(session);
+    if (existing) {
+      await session.abortTransaction();
+      return res.status(409).json({ message: 'A dispute is already open for this trade' });
+    }
+
+    const [dispute] = await Dispute.create(
+      [{ trade: tradeId, raisedBy: req.user.id, reason: reason.trim(), status: 'open' }],
+      { session }
+    );
+
+    // Trade → disputed, EscrowRecord → frozen, DISPUTE_HOLD ledger (no money moved).
+    await escrowService.freeze(tradeId, session);
+
+    const [sysMsg] = await Message.create(
+      [{
+        trade: tradeId,
+        sender: req.user.id,
+        type: 'system',
+        content: `${req.user.fullName} raised a dispute`,
+      }],
+      { session }
+    );
+
+    await AuditLog.create(
+      [{
+        action: 'dispute_raised',
+        user: req.user.id,
+        metadata: { tradeId, disputeId: dispute._id, reason: reason.trim() },
+      }],
+      { session }
+    );
+
+    await session.commitTransaction();
+
+    // Emit only after the transaction commits.
+    emitToTrade(tradeId, 'new_message', sysMsg);
+    emitToTrade(tradeId, 'dispute_raised', { disputeId: dispute._id, tradeId });
+
+    res.status(201).json(dispute);
+  } catch (error) {
+    if (session.inTransaction()) await session.abortTransaction();
+    next(error);
+  } finally {
+    session.endSession();
   }
 };

@@ -3,6 +3,11 @@ const AuditLog = require('../models/AuditLog.model');
 const PlatformAccount = require('../models/PlatformAccount.model');
 
 const Listing = require('../models/Listing.model');
+const Dispute = require('../models/Dispute.model');
+const Message = require('../models/Message.model');
+const escrowService = require('../services/escrow.service');
+const { emitToTrade } = require('../sockets/trade.socket');
+const mongoose = require('mongoose');
 
 const getAuditLogs = async (req, res) => {
   try {
@@ -222,7 +227,7 @@ const adminRemoveListing = async (req, res) => {
   try {
     const listing = await Listing.findById(req.params.id);
     if (!listing) return res.status(404).json({ message: 'Listing not found' });
-    
+
     listing.status = 'removed';
     await listing.save();
 
@@ -239,6 +244,116 @@ const adminRemoveListing = async (req, res) => {
   }
 };
 
+// ── Disputes ─────────────────────────────────────────────────
+const getDisputes = async (req, res) => {
+  try {
+    const { limit = 50, page = 1 } = req.query;
+    const skip = (page - 1) * limit;
+
+    const filter = { status: { $ne: 'resolved' } };
+    const disputes = await Dispute.find(filter)
+      .populate('raisedBy', 'fullName email')
+      .populate({ path: 'trade', select: 'amountKes status buyer seller' })
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip(skip);
+
+    const total = await Dispute.countDocuments(filter);
+
+    res.json({
+      disputes,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        pages: Math.ceil(total / limit),
+      },
+    });
+  } catch (err) {
+    console.error('Get disputes error:', err);
+    res.status(500).json({ message: 'Failed to retrieve disputes' });
+  }
+};
+
+/**
+ * Resolve a dispute one of three ways. All money movement + state changes run in a
+ * single transaction; escrow errors (e.g. 503 payouts disabled, 400 bad split) bubble
+ * to the error middleware which maps err.statusCode.
+ * PATCH /api/admin/disputes/:id/resolve
+ */
+const resolveDispute = async (req, res, next) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    const { id } = req.params;
+    const { resolution, buyerAmount, sellerAmount, adminNotes } = req.body;
+
+    const VALID = ['release_to_seller', 'refund_to_buyer', 'split'];
+    if (!VALID.includes(resolution)) {
+      await session.abortTransaction();
+      return res.status(400).json({ message: `resolution must be one of: ${VALID.join(', ')}` });
+    }
+
+    const dispute = await Dispute.findById(id).session(session);
+    if (!dispute) {
+      await session.abortTransaction();
+      return res.status(404).json({ message: 'Dispute not found' });
+    }
+    if (dispute.status === 'resolved') {
+      await session.abortTransaction();
+      return res.status(409).json({ message: 'Dispute already resolved' });
+    }
+
+    const tradeId = dispute.trade.toString();
+
+    if (resolution === 'release_to_seller') {
+      await escrowService.release(tradeId, session);
+    } else if (resolution === 'refund_to_buyer') {
+      await escrowService.refund(tradeId, session);
+    } else {
+      await escrowService.split(tradeId, Number(buyerAmount), Number(sellerAmount), session);
+    }
+
+    dispute.status = 'resolved';
+    dispute.resolution = resolution;
+    dispute.resolvedBy = req.user.id;
+    dispute.resolvedAt = new Date();
+    if (adminNotes !== undefined) dispute.adminNotes = adminNotes;
+    await dispute.save({ session });
+
+    const [sysMsg] = await Message.create(
+      [{
+        trade: tradeId,
+        sender: req.user.id,
+        type: 'system',
+        content: `Dispute resolved: ${resolution}`,
+      }],
+      { session }
+    );
+
+    await AuditLog.create(
+      [{
+        action: 'dispute_resolved',
+        user: req.user.id,
+        metadata: { tradeId, disputeId: dispute._id, resolution, buyerAmount, sellerAmount },
+      }],
+      { session }
+    );
+
+    await session.commitTransaction();
+
+    emitToTrade(tradeId, 'new_message', sysMsg);
+    emitToTrade(tradeId, 'dispute_resolved', { disputeId: dispute._id, tradeId, resolution });
+
+    res.json(dispute);
+  } catch (error) {
+    if (session.inTransaction()) await session.abortTransaction();
+    next(error);
+  } finally {
+    session.endSession();
+  }
+};
+
 module.exports = {
   getAuditLogs,
   banUser,
@@ -249,4 +364,6 @@ module.exports = {
   getPlatformAccount,
   toggleCircuitBreaker,
   adminRemoveListing,
+  getDisputes,
+  resolveDispute,
 };

@@ -80,15 +80,19 @@ const release = async (tradeId, session) => {
     throw err;
   }
 
-  if (trade.status !== 'credentials_released') {
-    const err = new Error('Trade must be in credentials_released status before release');
+  // Accept the normal completion path (credentials_released) AND admin dispute
+  // resolution in the seller's favour (disputed). Neither release nor refund is
+  // wired to a buyer/seller endpoint, so widening these guards only adds the
+  // admin-resolution path.
+  if (!['credentials_released', 'disputed'].includes(trade.status)) {
+    const err = new Error('Trade must be in credentials_released or disputed status before release');
     err.statusCode = 400;
     throw err;
   }
 
   const escrowRecord = await EscrowRecord.findOne({ trade: tradeId }).session(session);
-  if (!escrowRecord || escrowRecord.status !== 'locked') {
-    const err = new Error('EscrowRecord not found or not in locked status');
+  if (!escrowRecord || !['locked', 'frozen'].includes(escrowRecord.status)) {
+    const err = new Error('EscrowRecord not found or not in a releasable status');
     err.statusCode = 400;
     throw err;
   }
@@ -250,4 +254,103 @@ const refund = async (tradeId, session) => {
   );
 };
 
-module.exports = { lock, release, freeze, refund };
+/**
+ * Split a disputed trade's escrowed deposit between buyer (partial refund) and
+ * seller (partial payout). The split is carved out of the buyer's locked deposit
+ * (trade.amountKes) — the 6% platform fee is WAIVED on splits.
+ *
+ * Requires buyerAmount + sellerAmount === trade.amountKes (the gross deposit).
+ * Composes existing wallet primitives:
+ *   - buyer portion : unlockFunds  (lockedInEscrow → availableBalance) + REFUND ledger
+ *   - seller portion: creditPendingPayout (pendingPayout += sellerAmount) + SELLER_PAYOUT
+ *                     ledger, plus a direct decrement of the buyer's lockedInEscrow for
+ *                     the seller's share + ESCROW_RELEASE ledger (mirrors release()).
+ * Net effect: buyer's lockedInEscrow for this trade returns to 0.
+ *
+ * @param {string} tradeId
+ * @param {number} buyerAmount   - refunded to the buyer (>= 0)
+ * @param {number} sellerAmount  - paid out to the seller (>= 0)
+ * @param {ClientSession} session
+ */
+const split = async (tradeId, buyerAmount, sellerAmount, session) => {
+  const opts = { session };
+
+  const trade = await Trade.findById(tradeId).session(session);
+  if (!trade) throw new Error('Trade not found');
+
+  const platformAccount = await PlatformAccount.findOne({}).session(session);
+  if (platformAccount && platformAccount.payoutsEnabled === false) {
+    const err = new Error('Seller payouts are temporarily disabled while platform integrity issues are investigated');
+    err.statusCode = 503;
+    throw err;
+  }
+
+  const escrowRecord = await EscrowRecord.findOne({ trade: tradeId }).session(session);
+  if (!escrowRecord || !['locked', 'frozen'].includes(escrowRecord.status)) {
+    const err = new Error('EscrowRecord not found or not in a splittable status');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  if (
+    !Number.isFinite(buyerAmount) || !Number.isFinite(sellerAmount) ||
+    buyerAmount < 0 || sellerAmount < 0 ||
+    buyerAmount + sellerAmount !== trade.amountKes
+  ) {
+    const err = new Error(`buyerAmount + sellerAmount must equal the escrowed deposit (${trade.amountKes})`);
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // Buyer's refunded share: lockedInEscrow → availableBalance (+ REFUND ledger)
+  if (buyerAmount > 0) {
+    await walletService.unlockFunds(trade.buyer, buyerAmount, tradeId, session);
+  }
+
+  // Seller's payout share
+  if (sellerAmount > 0) {
+    // pendingPayout += sellerAmount (+ SELLER_PAYOUT ledger)
+    await walletService.creditPendingPayout(trade.seller, sellerAmount, tradeId, session);
+
+    // Release the seller's share out of the buyer's lockedInEscrow (+ ESCROW_RELEASE ledger)
+    const buyerWalletBefore = await Wallet.findOneAndUpdate(
+      { user: trade.buyer },
+      { $inc: { lockedInEscrow: -sellerAmount } },
+      { new: false, ...opts }
+    );
+
+    await LedgerEntry.create(
+      [{
+        trade:         tradeId,
+        user:          trade.buyer,
+        type:          'ESCROW_RELEASE',
+        amountKes:     sellerAmount,
+        balanceBefore: buyerWalletBefore.lockedInEscrow,
+        balanceAfter:  buyerWalletBefore.lockedInEscrow - sellerAmount,
+        note:          `Escrow split — seller share released for trade ${tradeId}`,
+      }],
+      opts
+    );
+  }
+
+  // The whole gross deposit leaves the escrow pool; no fee → no revenue change.
+  await PlatformAccount.findOneAndUpdate(
+    {},
+    { $inc: { escrowPool: -trade.amountKes } },
+    { upsert: true, new: true, setDefaultsOnInsert: true, ...opts }
+  );
+
+  await EscrowRecord.findOneAndUpdate(
+    { trade: tradeId },
+    { $set: { status: 'released', releasedAt: new Date() } },
+    opts
+  );
+
+  await Trade.findByIdAndUpdate(
+    tradeId,
+    { $set: { status: 'completed' } },
+    opts
+  );
+};
+
+module.exports = { lock, release, freeze, refund, split };

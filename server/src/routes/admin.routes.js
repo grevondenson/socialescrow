@@ -14,4 +14,7 @@ router.patch('/listings/:id/remove', protect, requireRole('admin'), adminCtrl.ad
 router.get('/platform', protect, requireRole('admin'), adminCtrl.getPlatformAccount);
 router.patch('/platform/circuit-breaker', protect, requireRole('admin'), adminCtrl.toggleCircuitBreaker);
 
+router.get('/disputes', protect, requireRole('admin'), adminCtrl.getDisputes);
+router.patch('/disputes/:id/resolve', protect, requireRole('admin'), adminCtrl.resolveDispute);
+
 module.exports = router;

@@ -60,6 +60,10 @@ module.exports = { app, server };
 
 // ── Start ────────────────────────────────────────────────────
 if (process.env.NODE_ENV !== 'test') {
+  // Attach Socket.io to the same HTTP server (real-time trade chat + dispute events).
+  // Guarded out of tests so no socket handles leak into Jest and emitToTrade() no-ops.
+  require('./sockets/trade.socket').initSocket(server);
+
   const PORT = process.env.PORT || 5000;
   connectDB().then(() => {
     server.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
