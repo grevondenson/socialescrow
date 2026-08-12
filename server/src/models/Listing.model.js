@@ -8,9 +8,12 @@ const listingSchema = new mongoose.Schema({
   engagementRate:  { type: String },
   accountAgeYears: { type: Number },
   priceKes:        { type: Number, required: true },
-  description:     { type: String },
-  proofScreenshots:{ type: [String], default: [] },
-  status:          { type: String, enum: ['active','in_trade','sold','removed'], default: 'active' },
+  description:      { type: String },
+  proofScreenshots: { type: [String], default: [] },
+  ip:               { type: String },
+  moderationStatus: { type: String, enum: ['pending','approved','rejected'], default: 'pending' },
+  moderationNotes:  { type: String },
+  status:           { type: String, enum: ['pending_review','active','in_trade','sold','removed'], default: 'pending_review' },
 }, { timestamps: true });
 
 listingSchema.index({ platform: 1, status: 1 });

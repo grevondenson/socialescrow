@@ -25,17 +25,22 @@ exports.submitCredentials = async (req, res, next) => {
     }
 
     // Encrypt
-    const { encryptedData, iv } = vaultService.encrypt(credentials);
+    const encrypted = vaultService.encrypt(credentials);
 
     // Upsert vault entry
     const vault = await CredentialVault.findOneAndUpdate(
       { trade: tradeId },
-      { 
+      {
         listing: trade.listing,
         trade: tradeId,
-        encryptedCredentials: encryptedData,
-        iv,
-        revealed: false
+        encryptedCredentials: encrypted.encryptedData,
+        iv: encrypted.iv,
+        authTag: encrypted.authTag,
+        encryptedDataKey: encrypted.encryptedDataKey,
+        encryptedDataKeyIv: encrypted.encryptedDataKeyIv,
+        keyAuthTag: encrypted.keyAuthTag,
+        encryptionVersion: encrypted.encryptionVersion,
+        revealed: false,
       },
       { upsert: true, new: true }
     );
@@ -97,7 +102,14 @@ exports.revealCredentials = async (req, res, next) => {
     }
 
     // Decrypt
-    const decrypted = vaultService.decrypt(vault.encryptedCredentials, vault.iv);
+    const decrypted = vaultService.decrypt(
+      vault.encryptedCredentials,
+      vault.iv,
+      vault.authTag,
+      vault.encryptedDataKey,
+      vault.encryptedDataKeyIv,
+      vault.keyAuthTag
+    );
 
     await auditService.log('VAULT_REVEAL', req, { tradeId });
 

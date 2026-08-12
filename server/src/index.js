@@ -19,6 +19,14 @@ if (process.env.NODE_ENV !== 'test') {
 const app = express();
 const server = http.createServer(app);
 
+// ── Proxy trust ──────────────────────────────────────────────
+// Railway terminates TLS at its edge proxy, so the socket peer is always the
+// proxy. Without this, req.ip is the proxy address — which silently breaks the
+// M-Pesa webhook IP allowlist and mislabels every audit/auth log entry.
+// Pin the hop count: a numeric value makes Express take the Nth-from-right entry
+// of X-Forwarded-For, so a client-supplied header cannot spoof the source IP.
+app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS) || 1);
+
 // ── Middleware ───────────────────────────────────────────────
 app.use(helmet());
 app.use(cors({ origin: process.env.CLIENT_URL, credentials: true }));
@@ -33,6 +41,13 @@ app.use('/api/trades',   require('./routes/trades.routes'));
 app.use('/api/wallet',   require('./routes/wallet.routes'));
 app.use('/api/mpesa',    require('./routes/mpesa.routes'));
 app.use('/api/admin',    require('./routes/admin.routes'));
+app.use('/api/ai',       require('./routes/ai.routes'));
+
+const { startMpesaWorker } = require('./jobs/mpesa.job');
+
+startMpesaWorker().catch((err) => {
+  console.error('Failed to start M-Pesa BullMQ worker:', err.message || err);
+});
 
 // ── Health check ─────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok', env: process.env.NODE_ENV }));

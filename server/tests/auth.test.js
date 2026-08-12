@@ -46,7 +46,9 @@ describe('Auth Endpoints', () => {
       expect(res.status).toBe(201);
       expect(res.body.message).toContain('Registration successful');
       expect(res.body.accessToken).toBeDefined();
-      expect(res.body.refreshToken).toBeDefined();
+      // The refresh token is delivered as an httpOnly cookie, never in the body.
+      const cookies = res.headers['set-cookie'] || [];
+      expect(cookies.some((c) => c.startsWith('refreshToken='))).toBe(true);
       expect(res.body.user.email).toBe('john@example.com');
       expect(res.body.user.isVerified).toBe(false);
 
@@ -123,7 +125,9 @@ describe('Auth Endpoints', () => {
       expect(res.status).toBe(200);
       expect(res.body.message).toContain('Login successful');
       expect(res.body.accessToken).toBeDefined();
-      expect(res.body.refreshToken).toBeDefined();
+      // Refresh token is set as an httpOnly cookie, not returned in the body.
+      const cookies = res.headers['set-cookie'] || [];
+      expect(cookies.some((c) => c.startsWith('refreshToken='))).toBe(true);
       expect(res.body.user.email).toBe('test@example.com');
 
       const auditLog = await AuditLog.findOne({ action: 'login' });
@@ -206,7 +210,7 @@ describe('Auth Endpoints', () => {
           confirmPassword: 'Password123!',
         });
 
-      const user = await User.findOne({ email: 'verify@example.com' });
+      const user = await User.findOne({ email: 'verify@example.com' }).select('+verifyToken');
       userId = user._id;
       verifyToken = user.verifyToken;
     });
@@ -261,7 +265,7 @@ describe('Auth Endpoints', () => {
     });
 
     it('should allow listing creation after email verification', async () => {
-      const user = await User.findById(userId);
+      const user = await User.findById(userId).select('+verifyToken');
       const verifyRes = await request(app)
         .get(`/api/auth/verify/${user.verifyToken}`);
 
@@ -270,14 +274,14 @@ describe('Auth Endpoints', () => {
       const listingRes = await request(app)
         .post('/api/listings')
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ title: 'Test Listing' });
+        .send({ platform: 'Instagram', followers: 1000, niche: 'lifestyle', priceKes: 5000 });
 
       expect(listingRes.status).toBe(201);
     });
   });
 
   describe('Token Refresh', () => {
-    let refreshToken;
+    let refreshCookie;
 
     beforeEach(async () => {
       const registerRes = await request(app)
@@ -289,23 +293,27 @@ describe('Auth Endpoints', () => {
           confirmPassword: 'Password123!',
         });
 
-      refreshToken = registerRes.body.refreshToken;
+      // The refresh token lives in an httpOnly cookie; grab it to replay on /refresh.
+      const cookies = registerRes.headers['set-cookie'] || [];
+      refreshCookie = cookies.find((c) => c.startsWith('refreshToken='));
     });
 
     it('should refresh access token', async () => {
       const res = await request(app)
         .post('/api/auth/refresh')
-        .send({ refreshToken });
+        .set('Cookie', refreshCookie);
 
       expect(res.status).toBe(200);
       expect(res.body.accessToken).toBeDefined();
-      expect(res.body.refreshToken).toBeDefined();
+      // A rotated refresh token is returned as a fresh cookie, not in the body.
+      const cookies = res.headers['set-cookie'] || [];
+      expect(cookies.some((c) => c.startsWith('refreshToken='))).toBe(true);
     });
 
     it('should not refresh with invalid token', async () => {
       const res = await request(app)
         .post('/api/auth/refresh')
-        .send({ refreshToken: 'invalid-token' });
+        .set('Cookie', 'refreshToken=invalid-token');
 
       expect(res.status).toBe(401);
     });

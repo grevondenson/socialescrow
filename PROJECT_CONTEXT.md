@@ -8,10 +8,10 @@
 
 | Field | Value |
 |---|---|
-| **Active Phase** | Phase 4 — Wallet & Ledger |
-| **Week** | Week 2 |
+| **Active Phase** | Phase 6 — Dispute Resolution & Real-time Chat _(Phase 5 backend done; Phase 5 UI deferred)_ |
+| **Week** | Week 3 |
 | **Start date** | 8 June 2026 |
-| **Current branch** | `feature/phase-3-escrow` |
+| **Current branch** | `phase-5-mpesa-risk-mitigation` |
 | **Server** | http://localhost:5000 |
 | **Client** | http://localhost:3000 |
 | **DB** | MongoDB Atlas — `socialescrow` |
@@ -23,53 +23,90 @@
 ### Phase 1 — Auth + KYC
 - [x] Full project scaffold (client + server)
 - [x] All MongoDB models created
-- [x] Express server entry point with middleware stack
-- [x] MongoDB connection config
-- [x] Auth middleware (JWT protect)
-- [x] Role middleware (authorize)
-- [x] Error handler middleware
-- [x] Auth controller stubs (register, login, getMe, verifyEmail)
-- [x] Auth routes wired
-- [x] Next.js middleware.ts (route protection)
-- [x] `lib/api.ts` Axios instance with 401 interceptor
-- [x] `lib/utils.ts` (formatKES, cn, formatNumber)
-- [x] AuditLog model added
-- [x] requireVerifiedEmail inside auth.middleware.js added
-- [x] POST /auth/register — tested in Thunder Client
-- [x] POST /auth/login — returns access + refresh tokens (cookie)
-- [x] POST /auth/refresh — refresh token rotation
-- [ ] Email verification service (Nodemailer)
-- [x] GET /auth/verify/:token — tested
-- [ ] Register page UI (Next.js)
-- [ ] Login page UI (Next.js)
-- [ ] Protected route working end-to-end
-- [ ] Minimal admin JSON endpoints (fraud-flags, disputes, audit-log, ban)
+- [x] Auth middleware (JWT protect) & Role middleware
+- [x] POST /auth/register and POST /auth/login (Access + Refresh tokens)
+- [x] KYC Webhook handler (Daraja C2B simulation)
+- [x] Low name-similarity flag + manual review flow
+- [x] Admin KYC review endpoint
 
 ### Phase 2 — Listings & Feed
 - [x] Cloudinary service & Multer upload middleware
 - [x] Listings API (CRUD, Search, Filtering)
 - [x] Atlas Search aggregation pipeline (`$search`)
-- [x] Next.js infinite scroll marketplace feed (`app/page.tsx`)
-- [x] Listing detail RSC page (`app/listing/[id]/page.tsx`)
-- [x] Listing creation form with FormData (`app/listing/create/page.tsx`)
-- [x] React Query (`useInfiniteQuery`) integration
-- [ ] Admin dashboard connection
+- [x] New listings default to `pending_review`
+- [x] Public listing query only returns `active`
+- [x] Admin approve/reject moderation endpoint
+- [x] Next.js infinite scroll marketplace feed
+- [x] Listing detail RSC page
 
 ### Phase 3 — Trade Initiation & Escrow
 - [x] Atomic `initiateTrade` with race condition guard
-- [x] Secure `vault.service.js` (AES-256-CBC with hex key)
-- [x] Explicit `releaseCredentials` step for sellers
+- [x] Secure `vault.service.js` (Upgraded to Envelope Encryption)
 - [x] Atomic `revealCredentials` with `410 Gone` + `FraudFlag` protection
-- [x] Mock payment flow creating `EscrowRecord` and `LedgerEntries`
 - [x] Frontend: New Trade Initiation page (`/trade/new`)
-- [x] Frontend: Trade Room with 5s polling and memory-wipe timer
+- [x] Frontend: Trade Room with 60s memory-wipe timer
 - [x] Startup security guard for encryption key validation
 
 ### Phase 4 — Wallet & Ledger
-- [ ] Wallet reconciliation service
-- [ ] Ledger entry validation
-- [ ] Real-time balance updates
-- [ ] Transaction history UI
+- [x] Wallet reconciliation service
+- [x] Ledger entry validation (Immutability hooks)
+- [x] PlatformAccount singleton auto-creation (upsert)
+- [x] Payout circuit breaker guard in wallet & escrow services
+- [x] Manual payment submission endpoint
+- [x] Admin manual payment verification endpoint
+
+### Phase 5 — M-Pesa STK Push Integration
+- [x] `MpesaTransaction` model
+- [x] `/api/mpesa/stk-push` trigger endpoint
+- [x] STK callback processing in `mpesa.service.js`
+- [x] BullMQ status polling (`mpesa.job.js`)
+- [x] Backend startup / Redis / BullMQ graceful degradation (skips if missing)
+- [x] Webhook payment-confirmation hardening (IP allowlist, STK Query re-confirm, amount validation, replay guard) — see Known Issues [FIXED 12 Aug 2026]
+- [~] **DEFERRED (skipped for now)** — Frontend API wiring (Admin UI, STK Push UI, Manual Fallback UI)
+- [~] **DEFERRED (skipped for now)** — Integration testing / End-to-end validation (needs the UI + a live/staging Daraja callback)
+
+> ⚠️ **Phase 5 is BACKEND-COMPLETE, not fully complete.** The frontend UI and the full
+> end-to-end run are **intentionally skipped for now** and tracked as debt (see _Deferred Work_
+> below). We are proceeding to Phase 6 (backend) with this UI outstanding — it is deferred,
+> not forgotten. By the "Phase Completion Criteria" this leaves #2 (frontend in browser) unmet.
+
+> **Manual-payment endpoints live under `/api/mpesa`** (not `/api/wallet`):
+> `POST /api/mpesa/manual-payment`, `GET /api/mpesa/manual-payment/pending` (admin),
+> `PATCH /api/mpesa/manual-payment/:id/verify` (admin).
+
+### Phase 5.5 — AI Assistant (added ahead of plan — verify before relying on it)
+- [x] `POST /api/ai` — JWT-protected endpoint wired in `index.js`
+- [x] `anthropic.service.js` — `callClaude()` HTTP wrapper (env: `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY`)
+- [ ] ⚠️ Still on the legacy Text Completions API (`/v1/complete`, `max_tokens_to_sample`) with an invalid model id `claude-3.5-mini` — migrate to the Messages API (`/v1/messages`) and a real model id (e.g. `claude-haiku-4-5-20251001`) before use
+
+## Pending Phases
+
+### ⏸️ Deferred Work (skipped, tracked as debt — do NOT lose these)
+- **Phase 5 frontend UI** — STK Push UI, Manual Fallback UI, Admin manual-payment verification UI.
+  Backend endpoints exist and are hardened + tested; only the browser wiring is outstanding.
+  Deferred on 12 Aug 2026 to proceed to Phase 6 backend. Revisit in the dedicated frontend pass.
+- **Phase 5 end-to-end validation** — register → verify → STK push → webhook → escrow lock → reveal → payout.
+  Blocked on the UI above + a live/staging Daraja callback URL.
+- **`/api/ai` migration** — still on the legacy `/v1/complete` API with an invalid model id (see Phase 5.5).
+
+### Phase 6 — Dispute Resolution & Real-time Chat
+- [ ] Socket.io integration for real-time messaging _(`sockets/trade.socket.js` exists but is an empty stub — not wired into `index.js`)_
+- [ ] Dispute model and escalation flow _(`Dispute.model.js` exists; controller/routes not built)_
+- [ ] Admin dispute resolution endpoint
+
+### Phase 7 — B2C Payouts & Automated Release
+- [ ] PayoutQueue model
+- [ ] M-Pesa B2C integration for seller payouts
+- [ ] Admin payout approval flow
+
+### Phase 8 — Advanced Fraud Engine
+- [ ] Automated risk scoring (IP mismatch, velocity checks)
+- [ ] FingerprintJS integration
+- [ ] Auto-freeze accounts based on risk score
+
+### Phase 9 — Full Admin Dashboard UI
+- [ ] React admin dashboard
+- [ ] System health monitoring
 
 
 ```
@@ -290,17 +327,31 @@ Admin actions (all phases):
 
 ---
 
-## Phase 1 Minimal Admin Endpoints (JSON only — no UI yet)
+## Admin & Ops Endpoints (JSON only — no UI yet)
+
+Confirmed wired in `admin.routes.js` (all `protect` + `requireRole('admin')`):
 
 ```
-GET   /api/admin/fraud-flags        list all FraudFlag documents
-GET   /api/admin/disputes           list all Dispute documents
-GET   /api/admin/audit-log          recent AuditLog entries (last 100)
-PATCH /api/admin/users/:id/ban      ban a user { reason }
-PATCH /api/admin/users/:id/unban    unban a user
+GET   /api/admin/audit-log                 recent AuditLog entries (paginated)
+PATCH /api/admin/users/:id/ban             ban a user { reason }
+GET   /api/admin/users/kyc-review          users pending KYC manual review
+PATCH /api/admin/users/:id/kyc-review      approve/reject KYC
+GET   /api/admin/listings                  admin listing queue
+PATCH /api/admin/listings/:id/moderation   approve/reject a listing
+PATCH /api/admin/listings/:id/remove       admin remove a listing
+GET   /api/admin/platform                  PlatformAccount snapshot (escrow pool, revenue, breaker state)
+PATCH /api/admin/platform/circuit-breaker  toggle payouts on/off
 ```
 
-Full React admin dashboard UI → Phase 10.
+Manual-payment admin endpoints (in `mpesa.routes.js`):
+
+```
+GET   /api/mpesa/manual-payment/pending    pending manual payments
+PATCH /api/mpesa/manual-payment/:id/verify verify a manual payment
+```
+
+Not yet built (still planned): `GET /api/admin/fraud-flags`, `GET /api/admin/disputes`,
+`PATCH /api/admin/users/:id/unban`. Full React admin dashboard UI → Phase 9.
 
 ---
 
@@ -412,10 +463,12 @@ retryCount, lastPolledAt
 | `escrow.service.js` | lock() release() freeze() refund() — all use MongoDB sessions |
 | `wallet.service.js` | Atomic debit/credit with session, ledger entry creation, balance reconciliation |
 | `reputation.service.js` | recompute(userId) → updates User.reputation + sellerTier after each trade |
+| `reconciliation.service.js` | reconcileWallet() + reconcilePlatformAccount() — ledger-vs-balance integrity, auto-flag + circuit breaker on mismatch |
 | `fraud.service.js` | Risk score calculation, auto-flag creation, pattern detection via aggregation pipelines |
 | `email.service.js` | Nodemailer — verify email, trade notifications, dispute alerts, payout confirmations |
 | `notification.service.js` | In-app + email on all trade state changes |
 | `audit.service.js` | log(action, req, metadata) — called from controllers on every high-risk action |
+| `anthropic.service.js` | callClaude() HTTP wrapper for the `/api/ai` assistant (experimental — see Phase 5.5) |
 
 ---
 
@@ -453,21 +506,25 @@ retryCount, lastPolledAt
 
 ## Known Issues / Blockers
 
-_None at project start — update as you build_
+- **[FIXED 12 Aug 2026]** `reconciliation.service.js` declared `reconcilePlatformAccount` twice as a top-level `const` → `SyntaxError: Identifier ... already declared`. Because it's imported via `wallet.controller → wallet.routes → index.js`, this crashed the entire server (and test suite) on boot. Removed the duplicate; kept the circuit-breaker-aware version. Verified: `node --check` passes and `NODE_ENV=test node -e "require('./src/index.js')"` loads clean.
+- **[OPEN]** `/api/ai` uses the legacy Text Completions API and an invalid model id — see Phase 5.5. Do not rely on it until migrated.
+- **[FIXED 12 Aug 2026]** M-Pesa payment-confirmation hardening — plan [PLAN-mpesa-webhook-hardening.md](PLAN-mpesa-webhook-hardening.md), Steps 0–6. Closed three confirmed vulnerabilities: (1) **self-forgeable webhooks** — added `trust proxy` (`index.js`) + a fail-closed IP allowlist middleware (`mpesaIpAllowlist.middleware.js`) on both webhook routes, plus an independent STK Query re-confirmation gate before any settlement (`MPESA_REQUIRE_QUERY_CONFIRM`, default on); (2) **unvalidated amount** — the callback `Amount` and the admin-entered manual amount are now checked against `trade.amountKes`; a mismatch marks the txn `failed` and raises a `WEBHOOK_MISMATCH` FraudFlag without settling; (3) **replay** — `mpesaReceiptNumber` and `manualPayment.referenceCode` are now `unique + sparse`, with an E11000 duplicate-key treated as an idempotent no-op. Also stopped leaking `checkoutRequestId`/`merchantRequestId` in the STK trigger response, and stopped returning HTTP 500 for unknown/duplicate callbacks (now `200 {status:'ignored'}` so Daraja stops retrying). Verified: `node --check` clean, app boots under `NODE_ENV=test`, and the new `tests/mpesa.webhook.test.js` passes **12/12** (forgery, non-zero result, unknown-txn ack, amount mismatch, happy-path settlement, receipt replay, manual match/mismatch, + 4 allowlist unit tests) against a `MongoMemoryReplSet`. Step 7 (git hooks) intentionally out of scope. **Deploy note:** build the two unique indexes against a prod data copy first — a live build fails if duplicate receipts already exist; and re-verify `MPESA_ALLOWED_IPS` against current Safaricom egress ranges (they drift).
+- **[FIXED 12 Aug 2026]** `tests/auth.test.js` (was 8/14 red — pre-existing, independent of the M-Pesa work). Three causes: (1) **dominant** — `registerLimiter`/`loginLimiter` (`max: 5`, in-memory store) 429'd the 6th+ request because the counter never resets between tests, which cascaded into the `TypeError`/401 failures; (2) `register`/`login` deliver the refresh token as an httpOnly cookie (the frontend uses `withCredentials` + reads the `refreshToken` cookie), but the tests asserted `res.body.refreshToken`; (3) tests read `verifyToken` (a `select:false` field) without `.select('+verifyToken')` and posted an incomplete listing body. **Kept the secure cookie design** (confirmed correct against the client); fix was test-side (cookie assertions, `.select('+verifyToken')`, valid listing payload) + a `NODE_ENV==='test'` skip on the two limiters (`rateLimiter.middleware.js`, no production behaviour change). Verified: auth **14/14**, full suite **26/26** green.
+- **[FIXED 12 Aug 2026]** `listings.controller.js` `createListing` cast the *optional* `accountAgeYears` via `Number(accountAgeYears)`; when omitted this is `NaN`, which Mongoose refuses to cast → **HTTP 500** on every listing POST that left the field out. Fixed by only setting `accountAgeYears` on the document when it's actually provided (non-null / non-empty). Required numerics (`followers`, `priceKes`) are already guarded by the missing-fields check; `engagementRate` is a String and untouched. Regression covered: the "listing creation after email verification" test in `auth.test.js` now posts *without* `accountAgeYears` and asserts 201.
+- **[RESOLVED 12 Aug 2026]** Earlier note claimed "repo has no commits (detached HEAD)". That was a **misread of the wrong repository** — the session's outer working dir sits inside a separate git repo rooted at the home directory. The **actual project repo** (`socialescrow/socialescrow`) is healthy: real history, on branch `phase-5-mpesa-risk-mitigation`. ⚠️ Always run git from the project dir, not the outer folder.
 
 ---
 
 ## Next Session Goals
 
-**Monday 8 June — Session 1**
-1. [x] Run `setup.sh`, verify both servers boot clean
-2. [x] Add `AuditLog` model to server/src/models/
-3. [x] Add `requireVerifiedEmail` to auth.middleware.js
-4. [x] Update `User.model.js` with kycName, kycPhone, kycVerified, sellerTier fields
-5. [x] Test `POST /api/auth/register` in Thunder Client — verify wallet auto-created
-6. [x] Test `POST /api/auth/login` — confirm access token + refresh cookie returned
-7. [ ] Update this file, write LEARNINGS.md Day 1 entry
-8. [ ] Commit: `feat(auth): add user registration and dual-token login`
+**Friday 12 Aug 2026 — Backend confirmed through Phase 5**
+Phases 1–5 backend is code-complete and the app module boots clean (verified today). Focus next on:
+1. [x] Commit the working tree to `phase-5-mpesa-risk-mitigation` (M-Pesa hardening + auth/listing fixes + AI scaffold)
+2. [~] **DEFERRED** — Frontend API wiring for Phase 5: STK Push UI, Manual Fallback UI, Admin manual-payment verification UI
+3. [~] **DEFERRED** — End-to-end integration test: register → verify → STK push → webhook → escrow lock → reveal → payout
+4. [x] Jest suite green — **26/26** (auth 14 + M-Pesa 12, `--runInBand`). Auth fixes were test-side + a test-env rate-limiter skip; secure cookie design kept (see Known Issues).
+5. [ ] Migrate `/api/ai` off the legacy `/v1/complete` API to Messages API + a valid model id (or remove until needed)
+6. [ ] **NEXT: Begin Phase 6 (backend)** — wire Socket.io into `index.js` and flesh out `sockets/trade.socket.js`; build the Dispute controller/routes + admin resolution endpoint
 
 ---
 
@@ -506,4 +563,4 @@ A phase is complete only when:
 
 ---
 
-_Last updated: 8 June 2026 — All architectural decisions locked in_
+_Last updated: 12 Aug 2026 — Phases 1–5 backend confirmed against code; boot-time SyntaxError in reconciliation.service.js fixed; AI endpoint + admin/mpesa endpoints documented._

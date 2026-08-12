@@ -2,6 +2,9 @@ const Listing = require('../models/Listing.model');
 const AuditLog = require('../models/AuditLog.model');
 const { uploadStream, destroyImage } = require('../services/cloudinary.service');
 
+const MAX_LISTINGS_PER_DAY = 5;
+const MAX_DAILY_UPLOADS = 20;
+
 const createListing = async (req, res) => {
   const uploadedImages = [];
   try {
@@ -9,6 +12,17 @@ const createListing = async (req, res) => {
 
     if (!platform || !followers || !niche || !priceKes) {
       return res.status(400).json({ message: 'Missing required fields' });
+    }
+
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const recentListingCount = await Listing.countDocuments({ seller: req.user._id, createdAt: { $gte: since } });
+    if (recentListingCount >= MAX_LISTINGS_PER_DAY) {
+      return res.status(429).json({ message: `Listing creation limit reached. You may create up to ${MAX_LISTINGS_PER_DAY} listings per day.` });
+    }
+
+    const uploadCount = req.files?.length || 0;
+    if (uploadCount > MAX_DAILY_UPLOADS) {
+      return res.status(429).json({ message: `Too many files: max ${MAX_DAILY_UPLOADS} uploads per day.` });
     }
 
     if (req.files && req.files.length > 0) {
@@ -26,12 +40,20 @@ const createListing = async (req, res) => {
       followers: Number(followers),
       niche,
       engagementRate,
-      accountAgeYears: Number(accountAgeYears),
       priceKes: Number(priceKes),
       description,
       proofScreenshots,
-      status: 'active',
+      ip: req.ip,
+      status: 'pending_review',
+      moderationStatus: 'pending',
     });
+
+    // accountAgeYears is optional; only cast when actually provided. Number(undefined)
+    // / Number('') is NaN, and Mongoose refuses to cast NaN to a Number path — which
+    // would otherwise fail every listing POST that omits this field with a 500.
+    if (accountAgeYears !== undefined && accountAgeYears !== null && accountAgeYears !== '') {
+      listing.accountAgeYears = Number(accountAgeYears);
+    }
 
     await listing.save();
 

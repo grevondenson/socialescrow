@@ -1,5 +1,6 @@
 const User = require('../models/User.model');
 const AuditLog = require('../models/AuditLog.model');
+const PlatformAccount = require('../models/PlatformAccount.model');
 
 const Listing = require('../models/Listing.model');
 
@@ -69,6 +70,61 @@ const banUser = async (req, res) => {
   }
 };
 
+const reviewKycUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { decision, notes } = req.body;
+
+    if (!['approve', 'reject'].includes(decision)) {
+      return res.status(400).json({ message: "decision must be 'approve' or 'reject'" });
+    }
+
+    const user = await User.findById(id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    user.kycVerified = decision === 'approve';
+    user.kycReviewRequired = false;
+    if (user.kycVerified && !user.kycVerifiedAt) {
+      user.kycVerifiedAt = new Date();
+    }
+    user.kycVerificationMeta = {
+      ...user.kycVerificationMeta,
+      review: {
+        reviewedBy: req.user.id,
+        reviewedAt: new Date(),
+        decision,
+        notes,
+      }
+    };
+
+    await user.save();
+
+    await AuditLog.create({
+      action: 'kyc_review',
+      userId: req.user.id,
+      metadata: { reviewedUserId: id, decision, notes },
+    });
+
+    res.json({ message: `KYC ${decision}d`, user });
+  } catch (err) {
+    console.error('Review KYC error:', err);
+    res.status(500).json({ message: 'Failed to review KYC' });
+  }
+};
+
+const getPendingKycUsers = async (req, res) => {
+  try {
+    const users = await User.find({ kycReviewRequired: true })
+      .select('fullName email kycName kycPhone kycVerified kycVerificationMeta')
+      .lean();
+
+    res.json(users);
+  } catch (err) {
+    console.error('Get pending KYC users error:', err);
+    res.status(500).json({ message: 'Failed to fetch KYC review users' });
+  }
+};
+
 const getAdminListings = async (req, res) => {
   try {
     const listings = await Listing.find().sort({ createdAt: -1 }).populate('seller', 'kycName email');
@@ -76,6 +132,89 @@ const getAdminListings = async (req, res) => {
   } catch (error) {
     console.error('Admin get listings error:', error);
     res.status(500).json({ message: 'Failed to fetch admin listings' });
+  }
+};
+
+const reviewListing = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { decision, notes } = req.body;
+
+    if (!['approve', 'reject'].includes(decision)) {
+      return res.status(400).json({ message: "decision must be 'approve' or 'reject'" });
+    }
+
+    const listing = await Listing.findById(id);
+    if (!listing) return res.status(404).json({ message: 'Listing not found' });
+
+    listing.moderationStatus = decision === 'approve' ? 'approved' : 'rejected';
+    listing.status = decision === 'approve' ? 'active' : 'removed';
+    listing.moderationNotes = notes;
+
+    await listing.save();
+
+    await AuditLog.create({
+      action: 'listing_moderation',
+      userId: req.user.id,
+      metadata: { listingId: listing._id, decision, notes },
+    });
+
+    res.json({ message: `Listing ${decision}d`, listing });
+  } catch (error) {
+    console.error('Admin review listing error:', error);
+    res.status(500).json({ message: 'Failed to review listing' });
+  }
+};
+
+const getPlatformAccount = async (req, res) => {
+  try {
+    const platformAccount = await PlatformAccount.findOne({});
+    if (!platformAccount) {
+      return res.status(404).json({ message: 'Platform account not found' });
+    }
+
+    res.json(platformAccount);
+  } catch (error) {
+    console.error('Get platform account error:', error);
+    res.status(500).json({ message: 'Failed to fetch platform account' });
+  }
+};
+
+const toggleCircuitBreaker = async (req, res) => {
+  try {
+    const { action, reason } = req.body;
+    if (!['trigger', 'clear'].includes(action)) {
+      return res.status(400).json({ message: "action must be 'trigger' or 'clear'" });
+    }
+
+    const update = action === 'trigger'
+      ? {
+        payoutsEnabled: false,
+        circuitBreakerTriggeredAt: new Date(),
+        circuitBreakerReason: reason || 'Admin-triggered circuit breaker',
+      }
+      : {
+        payoutsEnabled: true,
+        circuitBreakerTriggeredAt: null,
+        circuitBreakerReason: null,
+      };
+
+    const platformAccount = await PlatformAccount.findOneAndUpdate(
+      {},
+      update,
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    await AuditLog.create({
+      action: 'platform_circuit_breaker',
+      userId: req.user.id,
+      metadata: { action, reason },
+    });
+
+    res.json(platformAccount);
+  } catch (error) {
+    console.error('Toggle circuit breaker error:', error);
+    res.status(500).json({ message: 'Failed to update circuit breaker' });
   }
 };
 
@@ -103,6 +242,11 @@ const adminRemoveListing = async (req, res) => {
 module.exports = {
   getAuditLogs,
   banUser,
+  reviewKycUser,
+  getPendingKycUsers,
   getAdminListings,
+  reviewListing,
+  getPlatformAccount,
+  toggleCircuitBreaker,
   adminRemoveListing,
 };
