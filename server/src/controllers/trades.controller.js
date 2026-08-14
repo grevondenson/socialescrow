@@ -11,6 +11,41 @@ const { emitToTrade } = require('../sockets/trade.socket');
 const mongoose = require('mongoose');
 
 /**
+ * @swagger
+ * components:
+ *   schemas:
+ *     Trade:
+ *       type: object
+ *       properties:
+ *         _id:
+ *           type: string
+ *           description: The auto-generated id of the trade.
+ *         listing:
+ *           type: string
+ *           description: The ID of the listing being traded.
+ *         buyer:
+ *           type: string
+ *           description: The ID of the buyer.
+ *         seller:
+ *           type: string
+ *           description: The ID of the seller.
+ *         status:
+ *           type: string
+ *           enum: [pending, payment_window, paid, credentials_released, completed, disputed, cancelled]
+ *           description: The current status of the trade.
+ *         amountKes:
+ *           type: number
+ *           description: The total amount of the trade in KES.
+ *       example:
+ *         _id: 60c72b2f9b1d8c001f8e4d4c
+ *         listing: 60c72b2f9b1d8c001f8e4d4a
+ *         buyer: 60c72b2f9b1d8c001f8e4d4b
+ *         seller: 60c72b2f9b1d8c001f8e4d49
+ *         status: 'payment_window'
+ *         amountKes: 5000
+ */
+
+/**
  * Initiate a new trade
  * POST /api/trades
  */
@@ -62,6 +97,31 @@ exports.initiateTrade = async (req, res, next) => {
 /**
  * Get trade details
  * GET /api/trades/:id
+ * @swagger
+ * /api/trades/{id}:
+ *   get:
+ *     summary: Get details for a specific trade
+ *     tags: [Trades]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         schema:
+ *           type: string
+ *         required: true
+ *         description: The trade ID
+ *     responses:
+ *       200:
+ *         description: The trade details.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Trade'
+ *       403:
+ *         description: Not authorized to view this trade.
+ *       404:
+ *         description: Trade not found.
  */
 exports.getTrade = async (req, res, next) => {
   try {

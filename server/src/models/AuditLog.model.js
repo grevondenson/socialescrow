@@ -33,4 +33,7 @@ const auditLogSchema = new mongoose.Schema({
   },
 }, { timestamps: true });
 
+// Index for admin query to get recent logs
+auditLogSchema.index({ createdAt: -1 });
+
 module.exports = mongoose.model('AuditLog', auditLogSchema);

@@ -13,4 +13,7 @@ const escrowSchema = new mongoose.Schema({
   mpesaPayoutRef:{ type: String },
 }, { timestamps: true });
 
+// Index for platform reconciliation query
+escrowSchema.index({ status: 1 });
+
 module.exports = mongoose.model('EscrowRecord', escrowSchema);

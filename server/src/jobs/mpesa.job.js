@@ -1,90 +1,71 @@
-const { Worker, Queue } = require('bullmq');
-const IORedis = require('ioredis');
+const { Queue, Worker } = require('bullmq');
+const Redis = require('ioredis');
+const logger = require('../config/logger');
 const mpesaService = require('../services/mpesa.service');
 
-const queueName = 'mpesa-status-check';
-let statusQueue = null;
-let worker = null;
-let redisConnection = null;
-const redisUrl = process.env.REDIS_URL?.trim();
+const queueName = 'mpesa-status-checks';
+let mpesaQueue;
+let worker;
+let redisConnection;
 
 const getRedisConnection = () => {
-  if (!redisUrl) return null;
-  if (redisConnection) return redisConnection;
-
-  redisConnection = new IORedis(redisUrl, {
-    lazyConnect: true,
-    connectTimeout: 10000,
-    maxRetriesPerRequest: null,
-  });
-
-  redisConnection.on('error', (err) => {
-    console.error('BullMQ Redis connection error:', err);
-  });
-
+  if (!redisConnection && process.env.REDIS_URL) {
+    redisConnection = new Redis(process.env.REDIS_URL, {
+      maxRetriesPerRequest: null, // BullMQ needs to be ableto retry
+    });
+  }
   return redisConnection;
 };
 
-const getStatusQueue = () => {
+const startMpesaWorker = async () => {
   const connection = getRedisConnection();
   if (!connection) {
-    throw new Error('Redis is not configured. Set REDIS_URL to enable the M-Pesa status queue.');
+    logger.warn('Redis not configured, M-Pesa worker will not start.');
+    return;
   }
 
-  if (!statusQueue) {
-    statusQueue = new Queue(queueName, { connection });
-  }
-  return statusQueue;
-};
-
-const startMpesaWorker = async () => {
-  if (!redisUrl) {
-    console.warn('Skipping M-Pesa BullMQ worker startup because REDIS_URL is not configured.');
-    return null;
-  }
-
-  if (worker) return worker;
+  mpesaQueue = new Queue(queueName, { connection });
 
   worker = new Worker(queueName, async (job) => {
-    const { checkoutRequestId, attempt } = job.data;
-    const transaction = await mpesaService.pollTransactionStatus(checkoutRequestId);
+    const { checkoutRequestId } = job.data;
+    logger.info({ job: job.id, checkoutRequestId }, 'Polling M-Pesa status');
+    await mpesaService.pollTransactionStatus(checkoutRequestId);
+  }, { connection });
 
-    if (transaction.status === 'pending' && attempt < 3) {
-      return { status: 'pending' };
-    }
-
-    return { status: transaction.status };
-  }, { connection: getRedisConnection() });
-
-  worker.on('completed', async (job) => {
-    const { checkoutRequestId, attempt } = job.data;
-    const state = job.returnvalue;
-    if (state.status === 'pending' && attempt < 3) {
-      const nextDelay = [120000, 240000, 480000][attempt] || 480000;
-      await getStatusQueue().add('check-status', { checkoutRequestId, attempt: attempt + 1 }, { delay: nextDelay, removeOnComplete: true, removeOnFail: true });
-    }
+  worker.on('completed', (job) => {
+    logger.info({ job: job.id }, `Job ${job.id} completed`);
   });
 
   worker.on('failed', (job, err) => {
-    console.error('Mpesa status worker failed:', job.id, err);
+    logger.error({ job: job.id, err }, `Job ${job.id} failed`);
   });
 
-  return worker;
+  worker.on('error', (err) => {
+    logger.error({ err }, 'BullMQ worker error');
+  });
+};
+
+const stopMpesaWorker = async () => {
+  if (worker) {
+    logger.info('Closing M-Pesa worker...');
+    await worker.close();
+    logger.info('M-Pesa worker closed.');
+  }
+  if (mpesaQueue) {
+    await mpesaQueue.close();
+  }
 };
 
 const enqueueStatusCheck = async (checkoutRequestId) => {
-  if (!redisUrl) {
-    console.warn('Cannot enqueue M-Pesa status check because REDIS_URL is not configured.');
-    return null;
+  if (!mpesaQueue) {
+    logger.warn('M-Pesa queue not initialized, skipping status check enqueue.');
+    return;
   }
-
-  await getStatusQueue().add('check-status', { checkoutRequestId, attempt: 0 }, {
-    removeOnComplete: true,
-    removeOnFail: true,
+  await mpesaQueue.add('poll-status', { checkoutRequestId }, {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 2 * 60 * 1000 }, // 2m, 4m, 8m
   });
+  logger.info({ checkoutRequestId }, 'Enqueued M-Pesa status check job.');
 };
 
-module.exports = {
-  enqueueStatusCheck,
-  startMpesaWorker,
-};
+module.exports = { startMpesaWorker, stopMpesaWorker, enqueueStatusCheck };

@@ -18,5 +18,11 @@ const listingSchema = new mongoose.Schema({
 
 listingSchema.index({ platform: 1, status: 1 });
 listingSchema.index({ priceKes: 1 });
+// Index for filtering by niche in search
+listingSchema.index({ niche: 1 });
+// Index for sorting by followers
+listingSchema.index({ followers: -1 });
+// Index for seller-specific queries (e.g., listing creation rate limit)
+listingSchema.index({ seller: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Listing', listingSchema);

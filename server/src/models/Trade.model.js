@@ -20,4 +20,9 @@ const tradeSchema = new mongoose.Schema({
   cancelReason:         { type: String },
 }, { timestamps: true });
 
+// Indexes for querying a user's trade history and for finding trades by status.
+tradeSchema.index({ buyer: 1, createdAt: -1 });
+tradeSchema.index({ seller: 1, createdAt: -1 });
+tradeSchema.index({ status: 1, createdAt: -1 });
+
 module.exports = mongoose.model('Trade', tradeSchema);

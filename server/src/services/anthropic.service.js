@@ -29,12 +29,25 @@ const getAuthHeaders = () => {
   return headers;
 };
 
-const callClaude = async (payload, path = '/v1/complete') => {
+const callClaude = async (payload, path = '/v1/messages') => {
   const url = `${getBaseUrl()}${path}`;
+  
+  // Transform payload to Messages API format
+  const messagesPayload = {
+    model: payload.model || 'claude-haiku-4-5-20241022',
+    max_tokens: payload.max_tokens_to_sample || 1000,
+    messages: [
+      {
+        role: 'user',
+        content: payload.prompt
+      }
+    ]
+  };
+
   const response = await fetch(url, {
     method: 'POST',
     headers: getAuthHeaders(),
-    body: JSON.stringify(payload),
+    body: JSON.stringify(messagesPayload),
   });
 
   const text = await response.text();
@@ -42,7 +55,13 @@ const callClaude = async (payload, path = '/v1/complete') => {
     throw new Error(`Claude request failed: ${response.status} ${text}`);
   }
 
-  return JSON.parse(text);
+  const data = JSON.parse(text);
+  
+  // Extract text from Messages API response format
+  return {
+    completion: data.content?.[0]?.text || '',
+    stop_reason: data.stop_reason,
+  };
 };
 
 module.exports = { callClaude };

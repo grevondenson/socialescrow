@@ -4,6 +4,7 @@ const LedgerEntry = require('../models/LedgerEntry.model');
 const PlatformAccount = require('../models/PlatformAccount.model');
 const Wallet = require('../models/Wallet.model');
 const walletService = require('./wallet.service');
+const CONFIG = require('../constants');
 
 /**
  * Lock buyer funds into escrow for a trade.
@@ -129,7 +130,7 @@ const release = async (tradeId, session) => {
       amountKes:     trade.platformFeeKes,
       balanceBefore: 0,
       balanceAfter:  0,
-      note:          `Platform 6% fee for trade ${tradeId}`,
+      note:          `Platform ${CONFIG.PAYMENT.PLATFORM_FEE_PERCENT}% fee for trade ${tradeId}`,
     }],
     opts
   );
