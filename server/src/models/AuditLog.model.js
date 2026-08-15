@@ -8,7 +8,8 @@ const auditLogSchema = new mongoose.Schema({
       'listing_create', 'listing_remove', 'trade_create',
       'kyc_submit', 'kyc_verified', 'kyc_mismatch',
       'email_verify_request', 'email_verified',
-      'VAULT_SUBMIT', 'VAULT_REVEAL', 'VAULT_REVEAL_ATTEMPT_FAILED'
+      'VAULT_SUBMIT', 'VAULT_REVEAL', 'VAULT_REVEAL_ATTEMPT_FAILED',
+      'dispute_raised', 'dispute_resolved'
     ],
     required: true,
   },
@@ -31,5 +32,8 @@ const auditLogSchema = new mongoose.Schema({
     default: {},
   },
 }, { timestamps: true });
+
+// Index for admin query to get recent logs
+auditLogSchema.index({ createdAt: -1 });
 
 module.exports = mongoose.model('AuditLog', auditLogSchema);

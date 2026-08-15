@@ -28,5 +28,7 @@ const mpesaTransactionSchema = new mongoose.Schema({
 
 mpesaTransactionSchema.index({ trade: 1 });
 mpesaTransactionSchema.index({ user: 1 });
+// Index for admin query to find pending manual payments
+mpesaTransactionSchema.index({ 'manualPayment.status': 1, status: 1 });
 
 module.exports = mongoose.model('MpesaTransaction', mpesaTransactionSchema);

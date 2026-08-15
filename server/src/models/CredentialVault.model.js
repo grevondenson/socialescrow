@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const vaultSchema = new mongoose.Schema({
   listing:              { type: mongoose.Schema.Types.ObjectId, ref: 'Listing', required: true },
-  trade:                { type: mongoose.Schema.Types.ObjectId, ref: 'Trade' },
+  trade:                { type: mongoose.Schema.Types.ObjectId, ref: 'Trade', unique: true, sparse: true },
   encryptedCredentials: { type: String, required: true, select: false },
   iv:                   { type: String, required: true, select: false },
   authTag:              { type: String, required: true, select: false },

@@ -4,7 +4,12 @@ const LedgerEntry = require('../models/LedgerEntry.model');
 const PlatformAccount = require('../models/PlatformAccount.model');
 
 /**
- * Custom error for insufficient funds
+ * Custom error for operations that fail due to insufficient funds.
+ * This error is specifically caught to return a 400 Bad Request status to the client.
+ * @extends Error
+ *
+ * @property {string} name - The name of the error, 'InsufficientFundsError'.
+ * @property {number} statusCode - The HTTP status code to be returned, 400.
  */
 class InsufficientFundsError extends Error {
   constructor(message = 'Insufficient funds') {
@@ -15,9 +20,13 @@ class InsufficientFundsError extends Error {
 }
 
 /**
- * Helper: if caller provides a session we use it (Pattern B — controller-owned).
- * If no session is provided (e.g. standalone admin call), we create and own one
- * with a guaranteed endSession() in the finally block.
+ * A helper function to manage MongoDB sessions.
+ * If a session is provided by the caller, it uses it (controller-owned transaction).
+ * If no session is provided, it creates, manages, and closes its own session.
+ * This ensures all operations within the callback `fn` are atomic.
+ * @param {mongoose.ClientSession | null} session - An existing Mongoose session.
+ * @param {(session: mongoose.ClientSession) => Promise<any>} fn - The async function to execute within the transaction.
+ * @returns {Promise<any>} The result of the `fn` function.
  */
 const _runInSession = async (session, fn) => {
   const ownSession = !session;
@@ -38,14 +47,18 @@ const _runInSession = async (session, fn) => {
 };
 
 /**
- * Credit a user's availableBalance.
- * Creates a LedgerEntry of the given type.
+ * Atomically credits a user's available balance and creates a corresponding ledger entry.
  *
- * @param {string} userId
- * @param {number} amountKes
- * @param {string} type  - LedgerEntry type enum value
- * @param {object} meta  - { tradeId?, note?, reference? }
- * @param {ClientSession|null} session
+ * @param {string | mongoose.Types.ObjectId} userId - The ID of the user to credit.
+ * @param {number} amountKes - The amount to credit (in KES). Must be a positive integer.
+ * @param {string} type - The type of ledger entry (e.g., 'DEPOSIT', 'REFUND').
+ * @param {object} [meta={}] - Optional metadata for the ledger entry.
+ * @param {string | mongoose.Types.ObjectId} [meta.tradeId] - The associated trade ID.
+ * @param {string} [meta.note] - A descriptive note.
+ * @param {string} [meta.reference] - An external reference code.
+ * @param {mongoose.ClientSession | null} [session=null] - An optional Mongoose session for transactions.
+ * @returns {Promise<import('../models/Wallet.model')>} The updated wallet object.
+ * @throws {Error} If the wallet for the user is not found.
  */
 const credit = async (userId, amountKes, type, meta = {}, session = null) => {
   return _runInSession(session, async (sess) => {
@@ -82,14 +95,19 @@ const credit = async (userId, amountKes, type, meta = {}, session = null) => {
 };
 
 /**
- * Debit a user's availableBalance.
- * Uses $gte guard to prevent overdraft — throws InsufficientFundsError (400) if balance is too low.
+ * Atomically debits a user's available balance and creates a corresponding ledger entry.
+ * This operation is protected against overdrafts by a `$gte` guard in the query.
  *
- * @param {string} userId
- * @param {number} amountKes
- * @param {string} type
- * @param {object} meta
- * @param {ClientSession|null} session
+ * @param {string | mongoose.Types.ObjectId} userId - The ID of the user to debit.
+ * @param {number} amountKes - The amount to debit (in KES). Must be a positive integer.
+ * @param {string} type - The type of ledger entry (e.g., 'WITHDRAWAL', 'ESCROW_LOCK').
+ * @param {object} [meta={}] - Optional metadata for the ledger entry.
+ * @param {string | mongoose.Types.ObjectId} [meta.tradeId] - The associated trade ID.
+ * @param {string} [meta.note] - A descriptive note.
+ * @param {string} [meta.reference] - An external reference code.
+ * @param {mongoose.ClientSession | null} [session=null] - An optional Mongoose session for transactions.
+ * @returns {Promise<import('../models/Wallet.model')>} The updated wallet object.
+ * @throws {InsufficientFundsError} If the user's available balance is less than the amount to be debited.
  */
 const debit = async (userId, amountKes, type, meta = {}, session = null) => {
   return _runInSession(session, async (sess) => {
@@ -125,14 +143,15 @@ const debit = async (userId, amountKes, type, meta = {}, session = null) => {
 };
 
 /**
- * Atomically move funds from availableBalance → lockedInEscrow.
- * Single $inc on both fields — one findOneAndUpdate, no split-operation risk.
- * Uses $gte guard on availableBalance.
+ * Atomically moves funds from a user's available balance to their locked-in-escrow balance.
+ * This is a single, atomic operation to prevent race conditions.
  *
- * @param {string} userId
- * @param {number} amountKes
- * @param {string} tradeId
- * @param {ClientSession|null} session
+ * @param {string | mongoose.Types.ObjectId} userId - The ID of the user whose funds are being locked.
+ * @param {number} amountKes - The amount to lock into escrow.
+ * @param {string | mongoose.Types.ObjectId} tradeId - The ID of the trade these funds are for.
+ * @param {mongoose.ClientSession | null} [session=null] - An optional Mongoose session for transactions.
+ * @returns {Promise<import('../models/Wallet.model')>} The updated wallet object.
+ * @throws {InsufficientFundsError} If the available balance is insufficient.
  */
 const lockFunds = async (userId, amountKes, tradeId, session = null) => {
   return _runInSession(session, async (sess) => {
@@ -170,12 +189,15 @@ const lockFunds = async (userId, amountKes, tradeId, session = null) => {
 };
 
 /**
- * Atomically move funds from lockedInEscrow → availableBalance (refund path).
+ * Atomically moves funds from a user's locked-in-escrow balance back to their available balance.
+ * This is used for refunds or when a trade is cancelled after funds are locked.
  *
- * @param {string} userId
- * @param {number} amountKes
- * @param {string} tradeId
- * @param {ClientSession|null} session
+ * @param {string | mongoose.Types.ObjectId} userId - The ID of the user whose funds are being unlocked.
+ * @param {number} amountKes - The amount to unlock from escrow.
+ * @param {string | mongoose.Types.ObjectId} tradeId - The ID of the trade associated with the refund.
+ * @param {mongoose.ClientSession | null} [session=null] - An optional Mongoose session for transactions.
+ * @returns {Promise<import('../models/Wallet.model')>} The updated wallet object.
+ * @throws {Error} If the wallet for the user is not found.
  */
 const unlockFunds = async (userId, amountKes, tradeId, session = null) => {
   return _runInSession(session, async (sess) => {
@@ -213,14 +235,16 @@ const unlockFunds = async (userId, amountKes, tradeId, session = null) => {
 };
 
 /**
- * Move seller's funds from lockedInEscrow → pendingPayout.
- * NOTE: This operates on the SELLER's wallet only.
- * The BUYER's lockedInEscrow decrement is handled separately in escrow.service.release().
+ * Credits a seller's pending payout balance. This does not move funds from escrow,
+ * but rather marks them as ready for future payout. The actual decrement from the
+ * buyer's `lockedInEscrow` balance is handled by the `escrow.service`.
  *
- * @param {string} userId  — seller's userId
- * @param {number} amountKes
- * @param {string} tradeId
- * @param {ClientSession|null} session
+ * @param {string | mongoose.Types.ObjectId} userId - The seller's user ID.
+ * @param {number} amountKes - The amount to credit to the pending payout balance.
+ * @param {string | mongoose.Types.ObjectId} tradeId - The ID of the completed trade.
+ * @param {mongoose.ClientSession | null} [session=null] - An optional Mongoose session for transactions.
+ * @returns {Promise<import('../models/Wallet.model')>} The updated wallet object.
+ * @throws {Error} If payouts are disabled by the platform or the wallet is not found.
  */
 const creditPendingPayout = async (userId, amountKes, tradeId, session = null) => {
   return _runInSession(session, async (sess) => {

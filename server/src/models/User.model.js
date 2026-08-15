@@ -28,4 +28,7 @@ const userSchema = new mongoose.Schema({
   },
 }, { timestamps: true });
 
+// Index for admin query to find users needing KYC review
+userSchema.index({ kycReviewRequired: 1 });
+
 module.exports = mongoose.model('User', userSchema);

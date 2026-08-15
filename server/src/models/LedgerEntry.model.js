@@ -28,6 +28,8 @@ ledgerSchema.pre('updateMany',       () => { throw new Error('Ledger entries are
 
 // Compound indexes for reconciliation aggregation
 ledgerSchema.index({ user: 1, type: 1, createdAt: -1 });
+// Index for fetching a user's ledger history, sorted by most recent
+ledgerSchema.index({ user: 1, createdAt: -1 });
 ledgerSchema.index({ trade: 1 });
 
 module.exports = mongoose.model('LedgerEntry', ledgerSchema);

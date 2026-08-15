@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const disputeSchema = new mongoose.Schema({
-  trade:       { type: mongoose.Schema.Types.ObjectId, ref: 'Trade', required: true },
+  trade:       { type: mongoose.Schema.Types.ObjectId, ref: 'Trade', required: true, index: true },
   raisedBy:    { type: mongoose.Schema.Types.ObjectId, ref: 'User',  required: true },
   reason:      { type: String, required: true },
   evidence:    { type: [String], default: [] },
@@ -11,5 +11,8 @@ const disputeSchema = new mongoose.Schema({
   resolvedAt:  { type: Date },
   adminNotes:  { type: String },
 }, { timestamps: true });
+
+// Index for finding disputes by status for the admin panel
+disputeSchema.index({ status: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Dispute', disputeSchema);

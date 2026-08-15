@@ -8,7 +8,7 @@
 
 | Field | Value |
 |---|---|
-| **Active Phase** | Phase 6 — Dispute Resolution & Real-time Chat _(Phase 5 backend done; Phase 5 UI deferred)_ |
+| **Active Phase** | Phase 6 — Dispute Resolution & Real-time Chat _(backend done + tested; Phase 6 UI deferred. Phase 5 backend done; Phase 5 UI deferred)_ |
 | **Week** | Week 3 |
 | **Start date** | 8 June 2026 |
 | **Current branch** | `phase-5-mpesa-risk-mitigation` |
@@ -88,11 +88,13 @@
 - **Phase 5 end-to-end validation** — register → verify → STK push → webhook → escrow lock → reveal → payout.
   Blocked on the UI above + a live/staging Daraja callback URL.
 - **`/api/ai` migration** — still on the legacy `/v1/complete` API with an invalid model id (see Phase 5.5).
+- **Phase 6 frontend UI** — chat panel + message feed in `client/app/trade/[id]/page.tsx`; "Raise Dispute" button + confirmation and hiding "Release" when `status === 'disputed'`; `client/lib/socket.ts` + the `socket.io-client` dependency; admin disputes page (`client/app/admin/disputes/page.tsx`, currently a stub). All blocked on client access-token handling (store token from login, attach as Bearer, feed the socket `auth.token`) — the prerequisite that makes chat/disputes authenticable. Backend is done + tested (15 dispute/chat tests). Deferred on 12 Aug 2026.
 
 ### Phase 6 — Dispute Resolution & Real-time Chat
-- [ ] Socket.io integration for real-time messaging _(`sockets/trade.socket.js` exists but is an empty stub — not wired into `index.js`)_
-- [ ] Dispute model and escalation flow _(`Dispute.model.js` exists; controller/routes not built)_
-- [ ] Admin dispute resolution endpoint
+- [x] Socket.io integration for real-time messaging _(backend done — `sockets/trade.socket.js` implements JWT-handshake auth + `join_trade`/`leave_trade` room membership; wired into `index.js`, test-guarded so Jest stays clean)_
+- [x] Dispute model and escalation flow _(backend done — `POST /api/trades/:id/dispute` freezes escrow → `Trade.disputed` / `EscrowRecord.frozen`; chat via `GET`/`POST /api/trades/:id/messages`)_
+- [x] Admin dispute resolution endpoint _(backend done — `GET /api/admin/disputes`, `PATCH /api/admin/disputes/:id/resolve` for `release_to_seller` / `refund_to_buyer` / `split`; `escrow.service.split()` added, fee waived on splits)_
+- [ ] **Phase 6 frontend UI** — deferred (see _Deferred Work_)
 
 ### Phase 7 — B2C Payouts & Automated Release
 - [ ] PayoutQueue model
@@ -517,6 +519,19 @@ retryCount, lastPolledAt
 
 ## Next Session Goals
 
+**Tuesday 12 Aug 2026 — Phase 6 backend done**
+Dispute resolution + real-time chat backend is code-complete and tested. Delivered this session:
+- Socket.io wired into `index.js` (test-guarded); `sockets/trade.socket.js` does JWT-handshake auth + `join_trade`/`leave_trade` room membership; `emitToTrade()` helper.
+- Chat: `GET`/`POST /api/trades/:id/messages` (participant-gated, persists + socket-pushes).
+- Disputes: `POST /api/trades/:id/dispute` freezes escrow (`Trade.disputed`, `EscrowRecord.frozen`); admin `GET /api/admin/disputes` + `PATCH /api/admin/disputes/:id/resolve` (`release_to_seller` / `refund_to_buyer` / `split`). Added `escrow.service.split()` (fee waived, split carved from buyer's gross deposit) and widened `release()`/`refund()` guards to accept `frozen`/`disputed`. Extended `AuditLog` action enum.
+- **Jest green — 41/41** (`--runInBand`): 26 prior + 15 new dispute/chat (`tests/dispute.test.js`, `MongoMemoryReplSet`). Clean exit, no open handles.
+
+Focus next on:
+1. [~] **DEFERRED** — Phase 6 frontend UI (chat panel, dispute button, admin disputes page, `socket.io-client`) + client access-token handling. See _Deferred Work_.
+2. [~] **DEFERRED** — Frontend API wiring for Phase 5 + end-to-end integration test.
+3. [ ] Migrate `/api/ai` off the legacy `/v1/complete` API to Messages API + a valid model id (or remove until needed).
+4. [ ] Begin Phase 7 (backend) — B2C payouts & automated release (`PayoutQueue`, M-Pesa B2C).
+
 **Friday 12 Aug 2026 — Backend confirmed through Phase 5**
 Phases 1–5 backend is code-complete and the app module boots clean (verified today). Focus next on:
 1. [x] Commit the working tree to `phase-5-mpesa-risk-mitigation` (M-Pesa hardening + auth/listing fixes + AI scaffold)
@@ -524,7 +539,7 @@ Phases 1–5 backend is code-complete and the app module boots clean (verified t
 3. [~] **DEFERRED** — End-to-end integration test: register → verify → STK push → webhook → escrow lock → reveal → payout
 4. [x] Jest suite green — **26/26** (auth 14 + M-Pesa 12, `--runInBand`). Auth fixes were test-side + a test-env rate-limiter skip; secure cookie design kept (see Known Issues).
 5. [ ] Migrate `/api/ai` off the legacy `/v1/complete` API to Messages API + a valid model id (or remove until needed)
-6. [ ] **NEXT: Begin Phase 6 (backend)** — wire Socket.io into `index.js` and flesh out `sockets/trade.socket.js`; build the Dispute controller/routes + admin resolution endpoint
+6. [x] **Phase 6 (backend) complete** — Socket.io wired; Dispute controller/routes + admin resolution endpoint built + tested
 
 ---
 

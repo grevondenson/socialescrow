@@ -11,7 +11,7 @@ router.post('/', protect, async (req, res, next) => {
 
     const result = await callClaude({
       prompt,
-      model: 'claude-3.5-mini',
+      model: 'claude-haiku-4-5-20241022',
       max_tokens_to_sample: 1000,
     });
 
