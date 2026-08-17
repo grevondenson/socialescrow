@@ -11,6 +11,8 @@ router.patch('/manual-payment/:id/verify', protect, requireRole('admin'), mpesaC
 // Daraja callbacks are unsigned — the IP allowlist is the only source check.
 router.post('/webhook/stk-push', mpesaIpAllowlist(), mpesaCtrl.stkPushWebhook);
 router.post('/webhook/kyc', mpesaIpAllowlist(), mpesaCtrl.kycWebhook);
+router.post('/webhook/b2c-result', mpesaIpAllowlist(), mpesaCtrl.b2cResultWebhook);
+router.post('/webhook/b2c-timeout', mpesaIpAllowlist(), mpesaCtrl.b2cTimeoutWebhook);
 
 router.get('/', (req, res) => res.json({ route: 'mpesa', status: 'live' }));
 

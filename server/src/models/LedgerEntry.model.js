@@ -5,7 +5,7 @@ const ledgerSchema = new mongoose.Schema({
   user:          { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   type: {
     type: String,
-    enum: ['DEPOSIT','ESCROW_LOCK','ESCROW_RELEASE','PLATFORM_FEE','SELLER_PAYOUT','REFUND','DISPUTE_HOLD'],
+    enum: ['DEPOSIT','ESCROW_LOCK','ESCROW_RELEASE','PLATFORM_FEE','SELLER_PAYOUT','REFUND','DISPUTE_HOLD','WITHDRAWAL'],
     required: true,
   },
   amountKes:     { type: Number, required: true },

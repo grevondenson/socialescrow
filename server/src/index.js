@@ -14,6 +14,7 @@ const { checkDarajaHealth, checkCloudinaryHealth } = require('./middleware/healt
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpec = require('./config/swagger');
 const { startMpesaWorker, stopMpesaWorker } = require('./jobs/mpesa.job');
+const { startPayoutWorker, stopPayoutWorker } = require('./jobs/payout.job');
 
 // ── Security Guard ───────────────────────────────────────────
 if (process.env.NODE_ENV !== 'test') {
@@ -29,6 +30,31 @@ if (process.env.NODE_ENV !== 'test') {
   if (key.length !== 32) {
     logger.fatal('VAULT_ENCRYPTION_KEY must be a 64-character hex string (32 bytes). Exiting.');
     process.exit(1);
+  }
+
+  // ── B2C payouts (Phase 7) ──
+  // Guarded only where payouts can actually fire: production, or AUTO_PAYOUT=true anywhere.
+  // `payout.service.sendB2C` validates these same five at request time, but by then the cost
+  // is a retry storm against Daraja and a payout stranded at `approved`. Refusing to boot is
+  // the cheaper failure.
+  if (process.env.NODE_ENV === 'production' || process.env.AUTO_PAYOUT === 'true') {
+    const missing = [
+      'MPESA_B2C_SHORTCODE',
+      'MPESA_INITIATOR_NAME',
+      'MPESA_SECURITY_CREDENTIAL',
+      'MPESA_B2C_RESULT_URL',
+      'MPESA_B2C_TIMEOUT_URL',
+    ].filter((name) => !process.env[name]);
+
+    if (missing.length > 0) {
+      // Names only, never values: MPESA_SECURITY_CREDENTIAL is the pre-computed encrypted
+      // initiator password and must never reach a log line.
+      logger.fatal(
+        { missing, autoPayout: process.env.AUTO_PAYOUT === 'true' },
+        'B2C payout configuration is incomplete but payouts can fire in this environment. Exiting.'
+      );
+      process.exit(1);
+    }
   }
 }
 
@@ -148,6 +174,11 @@ const startServer = async () => {
     await startMpesaWorker();
     logger.info('M-Pesa BullMQ worker started.');
 
+    // Starts after connectDB: its first act is to sweep up payouts left at `approved` by a
+    // previous run, which needs Mongo.
+    await startPayoutWorker();
+    logger.info('Payout BullMQ worker started.');
+
     // 5. Initialize Sockets
     require('./sockets/trade.socket').initSocket(server);
     logger.info('Socket.io initialized.');
@@ -169,6 +200,7 @@ const gracefulShutdown = (signal) => {
   server.close(async () => {
     logger.info('HTTP server closed.');
     await stopMpesaWorker(); // Close BullMQ worker to allow in-flight jobs to finish
+    await stopPayoutWorker();
     if (redis) await redis.quit();
     await mongoose.disconnect();
     logger.info('All connections closed. Exiting.');

@@ -8,10 +8,10 @@
 
 | Field | Value |
 |---|---|
-| **Active Phase** | Phase 6 — Dispute Resolution & Real-time Chat _(backend done + tested; Phase 6 UI deferred. Phase 5 backend done; Phase 5 UI deferred)_ |
+| **Active Phase** | Phase 7 — B2C Payouts & Automated Release _(backend done + tested, UNCOMMITTED; Phase 7 UI deferred. Phases 5 & 6 backend done; their UI deferred)_ |
 | **Week** | Week 3 |
 | **Start date** | 8 June 2026 |
-| **Current branch** | `phase-5-mpesa-risk-mitigation` |
+| **Current branch** | `phase-6` |
 | **Server** | http://localhost:5000 |
 | **Client** | http://localhost:3000 |
 | **DB** | MongoDB Atlas — `socialescrow` |
@@ -97,9 +97,11 @@
 - [ ] **Phase 6 frontend UI** — deferred (see _Deferred Work_)
 
 ### Phase 7 — B2C Payouts & Automated Release
-- [ ] PayoutQueue model
-- [ ] M-Pesa B2C integration for seller payouts
-- [ ] Admin payout approval flow
+- [x] PayoutQueue model _(`models/PayoutQueue.model.js` — one row per trade (`trade` is unique), statuses `pending_approval → approved → processing → sent | failed | cancelled`, correlated to Daraja by `conversationId`/`originatorConversationId`)_
+- [x] M-Pesa B2C integration for seller payouts _(`services/payout.service.js` — `sendB2C` (CAS `approved → processing`, breaker-gated), `processB2CResult`, `processB2CTimeout`; callbacks at `POST /api/mpesa/webhook/b2c-result` and `/b2c-timeout`, IP-allowlisted; dispatch via the `payout-disbursements` BullMQ queue in `jobs/payout.job.js`, 3 attempts, exponential backoff, 4xx classified `UnrecoverableError`)_
+- [x] Admin payout approval flow _(`GET /api/admin/payouts`, `PATCH /api/admin/payouts/:id/approve|reject|requeue`; approve enqueues after commit, reject accepts `pending_approval`/`approved`, requeue takes a `cancelled` row back to `pending_approval`)_
+- [x] Ledger + reconciliation correctness _(pre-Phase-7 bugfix: `WITHDRAWAL` debit type added, `SELLER_PAYOUT` classified as a credit, `PLATFORM_FEE` excluded from the wallet identity — see ADR 31)_
+- [ ] **Phase 7 frontend UI** — deferred. Admin payout queue page + seller "payout sent" state in the trade room. Same blocker as Phase 6 UI (client access-token handling).
 
 ### Phase 8 — Advanced Fraud Engine
 - [ ] Automated risk scoring (IP mismatch, velocity checks)
@@ -162,6 +164,7 @@ ESCROW ZONE
 | 28 | Marketplace visibility | GET /listings and GET /listings/:id are fully public — no auth needed | Buyers research seller rating, reviews, price before committing funds |
 | 29 | Trade initiation gate | "I'm Interested" → redirects to login if unauth → returns to listing after auth | Smooth UX. Never block browsing. Only gate the money action |
 | 30 | Deployment stack | Vercel (Next.js) + Railway (Express + Redis) + MongoDB Atlas + Cloudinary | Railway public domain works as Daraja webhook URL from day one |
+| 31 | Ledger classification for the wallet identity | `CREDIT_TYPES = ['DEPOSIT','SELLER_PAYOUT']`, `DEBIT_TYPES = ['ESCROW_RELEASE','WITHDRAWAL']`, `PLATFORM_FEE` excluded. Reconciliation asserts `sum(credits) − sum(debits) === availableBalance + lockedInEscrow + pendingPayout` | The identity has to hold from **the seller's wallet's** point of view, not the platform's. `SELLER_PAYOUT` is what escrow release *credits into* the seller — a credit, though the name reads like an outflow. `ESCROW_RELEASE` is the buyer's locked funds leaving their wallet — a debit. `WITHDRAWAL` (new in Phase 7) is the B2C disbursement that finally moves money off-platform, and is the only thing that clears `pendingPayout`. `PLATFORM_FEE` is excluded because it never touches a user wallet — it lands on `PlatformAccount`, so counting it would put the identity permanently out by the fee on every trade |
 
 ---
 
@@ -279,18 +282,33 @@ Recomputed by `reputationService.recompute(userId)` after every trade completion
 ## B2C Payout Strategy
 
 ```
-AUTO_PAYOUT env flag (default: false)
+AUTO_PAYOUT env flag (default: false) — implemented in Phase 7
 
-When false (Phase 8 default):
-  Trade completes → PayoutQueue entry created with status 'pending_approval'
-  Admin sees queue at GET /api/admin/payouts
-  Admin approves → B2C fires → seller receives M-Pesa
+When false (the current default):
+  Escrow release → PayoutQueue row created, status 'pending_approval'
+                   seller's wallet.pendingPayout credited (they are owed the money)
+  Admin sees the queue at GET /api/admin/payouts?status=pending_approval
+  Admin approves    → row → 'approved' → BullMQ job → sendB2C → 'processing'
+  Daraja result     → 'sent'   + WITHDRAWAL ledger entry, pendingPayout cleared
+                    → 'failed' + lastError, pendingPayout untouched (still owed)
 
-When true (Phase 9+ after fraud engine live):
-  Trade completes → B2C fires immediately
-  Admin only sees log, no manual approval step
+When true (deferred to Phase 8, after the fraud engine is live):
+  Escrow release → row created already 'approved', no human step.
+  Dispatch still goes through the same queue + sendB2C + callbacks, so the
+  audit trail and the kill switch are identical either way.
 
-Switch by updating: AUTO_PAYOUT=true in Railway env vars
+Switch by updating AUTO_PAYOUT=true in Railway env vars.
+
+Safety rails, all Phase 7:
+  - Kill switch: PlatformAccount.payoutsEnabled=false makes escrow release, sendB2C,
+    and admin approve all throw 503. Toggle at PATCH /api/admin/circuit-breaker.
+  - Boot guard: index.js exits if NODE_ENV=production OR AUTO_PAYOUT=true while any of
+    the five MPESA_B2C_* / MPESA_INITIATOR_NAME / MPESA_SECURITY_CREDENTIAL vars is missing.
+  - CAS on every transition, so two admins (or a retried job) can never double-disburse.
+  - trade is unique on PayoutQueue → one payout per trade, ever. A cancelled row is the
+    only thing that can be re-queued (PATCH /api/admin/payouts/:id/requeue).
+  - 'failed' is NOT re-queueable: a timeout may mean Daraja paid and lost the callback.
+    Retrying those needs a Transaction Status query first — Phase 8.
 ```
 
 ---
@@ -298,6 +316,12 @@ Switch by updating: AUTO_PAYOUT=true in Railway env vars
 ## Audit Logging — High-Risk Actions
 
 Every high-risk action creates an `AuditLog` entry:
+
+> **Convention:** the `action` enum in `models/AuditLog.model.js` is lowercase `snake_case`
+> (the three `VAULT_*` values are legacy exceptions). The names below are the *intent*; only
+> the Phase 7 block has been reconciled against the live enum. `AuditLog.create` throws on an
+> unlisted action, so anything written from a controller must exist in the enum first — see the
+> `platform_circuit_breaker` comment in the model for what that bug looks like in production.
 
 ```
 Model: AuditLog {
@@ -317,13 +341,18 @@ Actions logged from Phase 5+:
   STK_PUSH_TRIGGERED, STK_PUSH_CONFIRMED, STK_PUSH_FAILED
   VAULT_SUBMIT, VAULT_REVEAL
 
-Actions logged from Phase 8+:
-  PAYOUT_QUEUED, PAYOUT_APPROVED, PAYOUT_SENT, PAYOUT_FAILED
+Payouts + kill switch (Phase 7 — live enum values, verbatim):
+  payout_queued              escrow release put a row in PayoutQueue
+  payout_approved            admin cleared it for disbursement
+  payout_rejected            admin cancelled it (seller still owed)
+  payout_requeued            admin sent a cancelled row back to pending_approval
+  payout_sent                Daraja confirmed the B2C; WITHDRAWAL ledger entry written
+  payout_failed              non-zero ResultCode or B2C timeout; seller still owed
+  platform_circuit_breaker   payouts globally disabled/re-enabled
 
 Admin actions (all phases):
   ADMIN_BAN, ADMIN_UNBAN
   ADMIN_DISPUTE_RESOLVE
-  ADMIN_PAYOUT_APPROVE
   ADMIN_FLAG_RESOLVE
 ```
 
@@ -343,7 +372,19 @@ PATCH /api/admin/listings/:id/moderation   approve/reject a listing
 PATCH /api/admin/listings/:id/remove       admin remove a listing
 GET   /api/admin/platform                  PlatformAccount snapshot (escrow pool, revenue, breaker state)
 PATCH /api/admin/platform/circuit-breaker  toggle payouts on/off
+
+GET   /api/admin/payouts                   payout queue, newest first; ?status= &page= &per_page=
+PATCH /api/admin/payouts/:id/approve       clear for B2C → enqueues the disbursement job
+PATCH /api/admin/payouts/:id/reject        cancel a pending_approval/approved row { reason }
+PATCH /api/admin/payouts/:id/requeue       send a cancelled row back to pending_approval { reason }
+
+GET   /api/admin/disputes                  open disputes (paginated)
+PATCH /api/admin/disputes/:id/resolve      release_to_seller | refund_to_buyer | split
 ```
+
+The four payout endpoints are the only ones using the `{ data }` / `{ data, meta }` envelope and
+`next(err)`; everything above them predates that convention and returns bare documents with
+inline `res.status(500)`. New endpoints follow the envelope — the legacy ones are left alone.
 
 Manual-payment admin endpoints (in `mpesa.routes.js`):
 
@@ -352,7 +393,18 @@ GET   /api/mpesa/manual-payment/pending    pending manual payments
 PATCH /api/mpesa/manual-payment/:id/verify verify a manual payment
 ```
 
-Not yet built (still planned): `GET /api/admin/fraud-flags`, `GET /api/admin/disputes`,
+Daraja callbacks (in `mpesa.routes.js`, unauthenticated — `mpesaIpAllowlist()` is the only
+source check, and it answers 403 directly rather than via the error middleware because Daraja
+retries 5xx):
+
+```
+POST  /api/mpesa/webhook/stk-push          C2B payment confirmation
+POST  /api/mpesa/webhook/kyc               KYC name/MSISDN from the first payment
+POST  /api/mpesa/webhook/b2c-result        payout outcome — the only thing that settles a payout
+POST  /api/mpesa/webhook/b2c-timeout       Daraja never dequeued the request → row 'failed'
+```
+
+Not yet built (still planned): `GET /api/admin/fraud-flags`,
 `PATCH /api/admin/users/:id/unban`. Full React admin dashboard UI → Phase 9.
 
 ---
@@ -503,6 +555,13 @@ retryCount, lastPolledAt
 - [x] `VAULT_ENCRYPTION_KEY` — 64 hex characters (32 bytes)
 - [x] `AUTO_PAYOUT` — set to `false`
 - [x] `CLIENT_URL` — http://localhost:3000 for dev
+- [ ] `MPESA_B2C_SHORTCODE` — B2C product shortcode (not the C2B `MPESA_SHORTCODE`)
+- [ ] `MPESA_INITIATOR_NAME` — API operator username on the B2C product
+- [ ] `MPESA_SECURITY_CREDENTIAL` — initiator password, RSA-encrypted + base64. **Pre-computed, never derived at runtime, never logged, never in a response.** Rotate if it ever appears in a log or diff
+- [ ] `MPESA_B2C_RESULT_URL` / `MPESA_B2C_TIMEOUT_URL` — Railway public HTTPS URLs
+
+The last five are enforced at boot: `index.js` exits 1 if `NODE_ENV=production` **or**
+`AUTO_PAYOUT=true` and any of them is missing. It logs the missing *names* only.
 
 ---
 
@@ -519,6 +578,22 @@ retryCount, lastPolledAt
 
 ## Next Session Goals
 
+**Saturday 16 Aug 2026 — Phase 7 backend done (UNCOMMITTED)**
+B2C payouts are code-complete and tested against plan [PLAN-phase7-b2c-payouts.md](PLAN-phase7-b2c-payouts.md), Steps 0–6. Delivered this session:
+- **Step 0 — ledger/reconciliation bugfix** (two P0s found in the pre-phase audit): `SELLER_PAYOUT` was being counted as a debit and `PLATFORM_FEE` was inside the wallet identity, so reconciliation drifted by the fee on every completed trade. Added the `WITHDRAWAL` ledger type. See ADR 31.
+- `PayoutQueue` model (one row per trade — `trade` is unique), `services/payout.service.js` (`sendB2C` / `processB2CResult` / `processB2CTimeout`), `jobs/payout.job.js` (BullMQ `payout-disbursements`, 3 attempts + exponential backoff, 4xx → `UnrecoverableError`, startup sweep for rows stranded at `approved`).
+- Admin flow: `GET /api/admin/payouts` + `approve` / `reject` / `requeue`. Callbacks: `POST /api/mpesa/webhook/b2c-result` and `/b2c-timeout`, both IP-allowlisted.
+- Two fixes found while building: the circuit-breaker audit write threw on a missing enum value *after* the breaker had already flipped (admin saw a 500 for a change that took effect); and the production error mask was flattening deliberate 503s into "internal server error", hiding the one signal that says retry-later rather than report-a-bug.
+- Boot guard + `.env.example` block for the five B2C vars; `AUTO_PAYOUT=false`.
+- **Jest green — 120/120** (`payout.test.js` 66). Not covered by tests: the `UnrecoverableError` classification and the startup sweep, both of which need live Redis.
+
+Focus next on:
+1. [ ] **Commit Phase 7** — 18 paths still uncommitted on `phase-6`. Then branch/PR; never push to `main`.
+2. [ ] **Sandbox end-to-end B2C** — the one thing tests cannot prove: real Daraja credentials, real callbacks hitting the public URLs, `MPESA_ALLOWED_IPS` verified against current Safaricom egress.
+3. [ ] Phase 8 groundwork the payout design already leans on: a repeatable sweep + Transaction Status query, which is also what would make `failed` rows safely re-queueable.
+4. [~] **DEFERRED** — Phase 7 UI (admin payout queue, seller payout state in the trade room), blocked behind client access-token handling like Phases 5–6.
+5. [ ] Migrate `/api/ai` off the legacy `/v1/complete` API (still open from 12 Aug).
+
 **Tuesday 12 Aug 2026 — Phase 6 backend done**
 Dispute resolution + real-time chat backend is code-complete and tested. Delivered this session:
 - Socket.io wired into `index.js` (test-guarded); `sockets/trade.socket.js` does JWT-handshake auth + `join_trade`/`leave_trade` room membership; `emitToTrade()` helper.
@@ -530,7 +605,7 @@ Focus next on:
 1. [~] **DEFERRED** — Phase 6 frontend UI (chat panel, dispute button, admin disputes page, `socket.io-client`) + client access-token handling. See _Deferred Work_.
 2. [~] **DEFERRED** — Frontend API wiring for Phase 5 + end-to-end integration test.
 3. [ ] Migrate `/api/ai` off the legacy `/v1/complete` API to Messages API + a valid model id (or remove until needed).
-4. [ ] Begin Phase 7 (backend) — B2C payouts & automated release (`PayoutQueue`, M-Pesa B2C).
+4. [x] **Phase 7 (backend) complete** — `PayoutQueue`, M-Pesa B2C, admin approval flow. Done 16 Aug 2026.
 
 **Friday 12 Aug 2026 — Backend confirmed through Phase 5**
 Phases 1–5 backend is code-complete and the app module boots clean (verified today). Focus next on:

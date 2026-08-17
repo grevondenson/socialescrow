@@ -5,15 +5,33 @@ const PlatformAccount = require('../models/PlatformAccount.model');
 const FraudFlag = require('../models/FraudFlag.model');
 
 /**
- * Entry types that increase the user's net holdings.
- * DEPOSIT is the only type that brings new money in.
+ * Ledger entry types are classified by their effect on a user's NET holdings, where
+ * net holdings = availableBalance + lockedInEscrow + pendingPayout.
+ *
+ * Anything that only shuffles money between those three buckets is NEUTRAL and must be
+ * excluded from both lists, or it would be counted twice.
+ *
+ *   NEUTRAL  ESCROW_LOCK   availableBalance → lockedInEscrow (lockFunds)
+ *            REFUND        lockedInEscrow → availableBalance (unlockFunds)
+ *            DISPUTE_HOLD  informational only; freeze() moves no balance
+ *            PLATFORM_FEE  informational only. Written with `user: trade.seller` by
+ *                          convention, but the fee revenue lands in
+ *                          PlatformAccount.revenueBalance — never in a user wallet.
+ *                          sellerPayoutKes is already net of the fee, so counting it
+ *                          as a seller debit would subtract it a second time.
  */
-const CREDIT_TYPES = ['DEPOSIT'];
 
-/**
- * Entry types that decrease the user's net holdings.
- */
-const DEBIT_TYPES = ['SELLER_PAYOUT', 'PLATFORM_FEE'];
+/** Types that bring new money into the user's net holdings. */
+const CREDIT_TYPES = [
+  'DEPOSIT',        // new money in from M-Pesa
+  'SELLER_PAYOUT',  // escrow released to the seller: pendingPayout increases
+];
+
+/** Types that take money out of the user's net holdings. */
+const DEBIT_TYPES = [
+  'ESCROW_RELEASE', // buyer's locked deposit leaves for the seller (gross on release, seller's share on split)
+  'WITHDRAWAL',     // B2C disbursement: pendingPayout drains and the money leaves the platform
+];
 
 /**
  * Reconcile a user's wallet against their ledger history.
@@ -29,13 +47,13 @@ const reconcileWallet = async (userId) => {
 
   // Aggregate credit totals
   const creditAgg = await LedgerEntry.aggregate([
-    { $match: { user: wallet._id, type: { $in: CREDIT_TYPES } } },
+    { $match: { user: wallet.user, type: { $in: CREDIT_TYPES } } },
     { $group: { _id: null, total: { $sum: '$amountKes' } } }
   ]);
 
   // Aggregate debit totals
   const debitAgg = await LedgerEntry.aggregate([
-    { $match: { user: wallet._id, type: { $in: DEBIT_TYPES } } },
+    { $match: { user: wallet.user, type: { $in: DEBIT_TYPES } } },
     { $group: { _id: null, total: { $sum: '$amountKes' } } }
   ]);
 

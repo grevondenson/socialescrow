@@ -3,8 +3,72 @@ const EscrowRecord = require('../models/EscrowRecord.model');
 const LedgerEntry = require('../models/LedgerEntry.model');
 const PlatformAccount = require('../models/PlatformAccount.model');
 const Wallet = require('../models/Wallet.model');
+const PayoutQueue = require('../models/PayoutQueue.model');
+const AuditLog = require('../models/AuditLog.model');
 const walletService = require('./wallet.service');
 const CONFIG = require('../constants');
+
+/**
+ * Queue a seller payout for M-Pesa B2C disbursement, inside the caller's transaction.
+ *
+ * `AUTO_PAYOUT` decides whether a human gates the send: false (the production default until
+ * the Phase 8 fraud engine is live) parks the payout at `pending_approval`; true skips
+ * straight to `approved` so the B2C worker can pick it up. Read at call time, not module
+ * load, so the flag can be flipped without a restart.
+ *
+ * `pendingPayout` is deliberately NOT debited here. It drains only when M-Pesa confirms the
+ * disbursement in the B2C Result callback, so a payout that fails on Daraja's side leaves
+ * the seller's balance intact and the payout retryable. No LedgerEntry is written either —
+ * queueing moves no money, so reconciliation is unaffected.
+ *
+ * @param {Document} trade
+ * @param {number} amountKes  - what the seller actually receives (already net of any fee)
+ * @param {ClientSession} session
+ * @returns {Document} the created PayoutQueue row
+ */
+const queuePayout = async (trade, amountKes, session) => {
+  const opts = { session };
+  const autoPayout = process.env.AUTO_PAYOUT === 'true';
+
+  // Guard against a double-queue the same way lock() guards EscrowRecord: the unique index
+  // on `trade` is the last-resort backstop against paying a seller twice.
+  let payout;
+  try {
+    [payout] = await PayoutQueue.create(
+      [{
+        trade:     trade._id,
+        seller:    trade.seller,
+        amountKes,
+        status:    autoPayout ? 'approved' : 'pending_approval',
+      }],
+      opts
+    );
+  } catch (err) {
+    if (err.code === 11000) {
+      const dupError = new Error('Payout already queued for this trade');
+      dupError.statusCode = 409;
+      throw dupError;
+    }
+    throw err;
+  }
+
+  await AuditLog.create(
+    [{
+      action:   'payout_queued',
+      user:     trade.seller,
+      metadata: {
+        tradeId:  trade._id.toString(),
+        payoutId: payout._id.toString(),
+        amountKes,
+        status:   payout.status,
+        autoPayout,
+      },
+    }],
+    opts
+  );
+
+  return payout;
+};
 
 /**
  * Lock buyer funds into escrow for a trade.
@@ -65,6 +129,8 @@ const lock = async (tradeId, session) => {
  *   2. SELLER_PAYOUT   — seller's pendingPayout += sellerPayoutKes  (via creditPendingPayout)
  *   3. PLATFORM_FEE    — informational, records platform's fee revenue
  *
+ * Also queues a PayoutQueue row so the credited pendingPayout can be disbursed via B2C.
+ *
  * @param {string} tradeId
  * @param {ClientSession} session
  */
@@ -100,6 +166,10 @@ const release = async (tradeId, session) => {
 
   // 1. Credit seller's pendingPayout — creates SELLER_PAYOUT LedgerEntry
   await walletService.creditPendingPayout(trade.seller, trade.sellerPayoutKes, tradeId, session);
+
+  // 1b. Queue that pendingPayout for B2C disbursement (money leaves the platform later,
+  //     only once M-Pesa confirms — see queuePayout)
+  await queuePayout(trade, trade.sellerPayoutKes, session);
 
   // 2. Decrement buyer's lockedInEscrow and create ESCROW_RELEASE LedgerEntry (buyer side)
   const buyerWalletBefore = await Wallet.findOneAndUpdate(
@@ -312,6 +382,11 @@ const split = async (tradeId, buyerAmount, sellerAmount, session) => {
   if (sellerAmount > 0) {
     // pendingPayout += sellerAmount (+ SELLER_PAYOUT ledger)
     await walletService.creditPendingPayout(trade.seller, sellerAmount, tradeId, session);
+
+    // Queue it for B2C disbursement. The fee is waived on splits, so the seller receives
+    // the full sellerAmount. Skipped entirely when sellerAmount is 0 — there is nothing
+    // to disburse, and an empty payout row would sit in the admin queue forever.
+    await queuePayout(trade, sellerAmount, session);
 
     // Release the seller's share out of the buyer's lockedInEscrow (+ ESCROW_RELEASE ledger)
     const buyerWalletBefore = await Wallet.findOneAndUpdate(
