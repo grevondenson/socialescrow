@@ -616,6 +616,7 @@ const handleKYCWebhook = async (req, res) => {
 const mpesaService = {
   handleKYCWebhook,
   getOAuthToken,
+  normalizePhone,
   triggerSTKPush,
   submitManualPayment,
   verifyManualPayment,

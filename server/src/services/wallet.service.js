@@ -282,6 +282,56 @@ const creditPendingPayout = async (userId, amountKes, tradeId, session = null) =
   });
 };
 
+/**
+ * Debits a seller's pending payout balance — the counterpart to `creditPendingPayout`, and
+ * the moment money genuinely leaves the platform. Called only from the B2C Result callback,
+ * once M-Pesa has confirmed the disbursement, so it writes the `WITHDRAWAL` ledger entry
+ * that `reconciliation.service` classifies as a debit.
+ *
+ * Deliberately does NOT check `payoutsEnabled`. The circuit breaker stops *new* payouts from
+ * being approved and sent; a Result callback for a disbursement M-Pesa has already made must
+ * still be recorded, or the ledger would permanently disagree with reality.
+ *
+ * @param {string | mongoose.Types.ObjectId} userId - The seller's user ID.
+ * @param {number} amountKes - The amount disbursed.
+ * @param {string | mongoose.Types.ObjectId} tradeId - The ID of the paid-out trade.
+ * @param {mongoose.ClientSession | null} [session=null] - An optional Mongoose session for transactions.
+ * @returns {Promise<import('../models/Wallet.model')>} The updated wallet object.
+ * @throws {InsufficientFundsError} If `pendingPayout` is below `amountKes`. The `$gte` guard is
+ *   the balance-level backstop against a replayed Result callback debiting twice, independent
+ *   of the unique `transactionReceipt` index.
+ */
+const debitPendingPayout = async (userId, amountKes, tradeId, session = null) => {
+  return _runInSession(session, async (sess) => {
+    const opts = { session: sess };
+
+    const oldWallet = await Wallet.findOneAndUpdate(
+      { user: userId, pendingPayout: { $gte: amountKes } },
+      { $inc: { pendingPayout: -amountKes } },
+      { new: false, ...opts }
+    );
+
+    if (!oldWallet) throw new InsufficientFundsError('Insufficient pending payout balance to disburse');
+
+    const balanceBefore = oldWallet.pendingPayout;
+    const balanceAfter  = balanceBefore - amountKes;
+
+    await LedgerEntry.create(
+      [{
+        trade:         tradeId,
+        user:          userId,
+        type:          'WITHDRAWAL',
+        amountKes,
+        balanceBefore,
+        balanceAfter,
+      }],
+      opts
+    );
+
+    return { ...oldWallet.toObject(), pendingPayout: balanceAfter };
+  });
+};
+
 module.exports = {
   InsufficientFundsError,
   credit,
@@ -289,4 +339,5 @@ module.exports = {
   lockFunds,
   unlockFunds,
   creditPendingPayout,
+  debitPendingPayout,
 };

@@ -48,8 +48,12 @@ const errorMiddleware = (err, req, res, next) => {
     message = 'Invalid or expired token. Please log in again.';
   }
 
-  // In production, mask generic 500-level errors to avoid leaking implementation details
-  if (process.env.NODE_ENV === 'production' && statusCode >= 500) {
+  // In production, mask generic 500-level errors to avoid leaking implementation details.
+  // 503 is exempt: it is never an accident. It is raised deliberately — the payout circuit
+  // breaker, escrow refusing to move money — and the message is operator-authored, carries no
+  // implementation detail, and is the only thing telling the caller to retry later rather than
+  // report a bug.
+  if (process.env.NODE_ENV === 'production' && statusCode >= 500 && statusCode !== 503) {
     message = 'An internal server error occurred. Please try again later.';
     code = 'INTERNAL_SERVER_ERROR';
   }

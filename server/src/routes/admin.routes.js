@@ -14,6 +14,11 @@ router.patch('/listings/:id/remove', protect, requireRole('admin'), adminCtrl.ad
 router.get('/platform', protect, requireRole('admin'), adminCtrl.getPlatformAccount);
 router.patch('/platform/circuit-breaker', protect, requireRole('admin'), adminCtrl.toggleCircuitBreaker);
 
+router.get('/payouts', protect, requireRole('admin'), adminCtrl.getPayouts);
+router.patch('/payouts/:id/approve', protect, requireRole('admin'), adminCtrl.approvePayout);
+router.patch('/payouts/:id/reject', protect, requireRole('admin'), adminCtrl.rejectPayout);
+router.patch('/payouts/:id/requeue', protect, requireRole('admin'), adminCtrl.requeuePayout);
+
 router.get('/disputes', protect, requireRole('admin'), adminCtrl.getDisputes);
 router.patch('/disputes/:id/resolve', protect, requireRole('admin'), adminCtrl.resolveDispute);
 
