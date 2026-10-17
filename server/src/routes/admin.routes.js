@@ -22,4 +22,6 @@ router.patch('/payouts/:id/requeue', protect, requireRole('admin'), adminCtrl.re
 router.get('/disputes', protect, requireRole('admin'), adminCtrl.getDisputes);
 router.patch('/disputes/:id/resolve', protect, requireRole('admin'), adminCtrl.resolveDispute);
 
+router.get('/fraud-flags', protect, requireRole('admin'), adminCtrl.getFraudFlags);
+
 module.exports = router;

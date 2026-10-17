@@ -54,13 +54,13 @@ export default function AdminPaymentsPage() {
         </div>
       </div>
 
-      {data.length === 0 ? (
+      {(data ?? []).length === 0 ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-500 shadow-sm">
           No manual payment cases are pending review.
         </div>
       ) : (
         <div className="space-y-6">
-          {data.map((payment) => (
+          {(data ?? []).map((payment) => (
             <div key={payment._id} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="grid gap-4 md:grid-cols-3">
                 <div>

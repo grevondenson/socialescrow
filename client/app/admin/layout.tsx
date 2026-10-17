@@ -13,17 +13,29 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
               <p className="mt-2 text-sm text-slate-500">Moderate listings, verify KYC cases, and manage manual payment exceptions.</p>
             </div>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              <Link href="/overview" className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-100">
+              <Link href="/admin/overview" className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-100">
                 Overview
               </Link>
-              <Link href="/kyc" className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-100">
+              <Link href="/admin/kyc" className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-100">
                 KYC Queue
               </Link>
-              <Link href="/listings" className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-100">
+              <Link href="/admin/listings" className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-100">
                 Listings
               </Link>
-              <Link href="/payments" className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-100">
+              <Link href="/admin/payments" className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-100">
                 Payments
+              </Link>
+              <Link href="/admin/payouts" className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-100">
+                Payouts
+              </Link>
+              <Link href="/admin/disputes" className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-100">
+                Disputes
+              </Link>
+              <Link href="/admin/fraud" className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-100">
+                Fraud
+              </Link>
+              <Link href="/admin/audit-log" className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-100">
+                Audit Log
               </Link>
             </div>
           </div>

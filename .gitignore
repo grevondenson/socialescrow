@@ -6,3 +6,5 @@ dist/
 build/
 *.log
 .DS_Store
+# TypeScript incremental build cache (from `tsc --noEmit` / next build)
+*.tsbuildinfo

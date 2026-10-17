@@ -8,10 +8,10 @@
 
 | Field | Value |
 |---|---|
-| **Active Phase** | Phase 7 — B2C Payouts & Automated Release _(backend done + tested, UNCOMMITTED; Phase 7 UI deferred. Phases 5 & 6 backend done; their UI deferred)_ |
+| **Active Phase** | Phase 7 — B2C Payouts & Automated Release _(backend done, tested and merged — PR #7; Phase 7 UI deferred. Phases 5 & 6 backend also done and merged; their UI deferred)_ |
 | **Week** | Week 3 |
 | **Start date** | 8 June 2026 |
-| **Current branch** | `phase-6` |
+| **Current branch** | `phase-7` (Phase 7 merged to `main` via PR #7, commit `836e6b1`) |
 | **Server** | http://localhost:5000 |
 | **Client** | http://localhost:3000 |
 | **DB** | MongoDB Atlas — `socialescrow` |
@@ -77,7 +77,7 @@
 ### Phase 5.5 — AI Assistant (added ahead of plan — verify before relying on it)
 - [x] `POST /api/ai` — JWT-protected endpoint wired in `index.js`
 - [x] `anthropic.service.js` — `callClaude()` HTTP wrapper (env: `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY`)
-- [ ] ⚠️ Still on the legacy Text Completions API (`/v1/complete`, `max_tokens_to_sample`) with an invalid model id `claude-3.5-mini` — migrate to the Messages API (`/v1/messages`) and a real model id (e.g. `claude-haiku-4-5-20251001`) before use
+- [x] Migrated to the Messages API — `POST /v1/messages`, `max_tokens` + `messages[]` payload, response parsed from `content[0].text`, model `claude-haiku-4-5-20241022` (commit `3dc2114`)
 
 ## Pending Phases
 
@@ -87,7 +87,7 @@
   Deferred on 12 Aug 2026 to proceed to Phase 6 backend. Revisit in the dedicated frontend pass.
 - **Phase 5 end-to-end validation** — register → verify → STK push → webhook → escrow lock → reveal → payout.
   Blocked on the UI above + a live/staging Daraja callback URL.
-- **`/api/ai` migration** — still on the legacy `/v1/complete` API with an invalid model id (see Phase 5.5).
+- **`/api/ai`** — migrated to the Messages API with a valid model id (commit `3dc2114`); no longer blocked.
 - **Phase 6 frontend UI** — chat panel + message feed in `client/app/trade/[id]/page.tsx`; "Raise Dispute" button + confirmation and hiding "Release" when `status === 'disputed'`; `client/lib/socket.ts` + the `socket.io-client` dependency; admin disputes page (`client/app/admin/disputes/page.tsx`, currently a stub). All blocked on client access-token handling (store token from login, attach as Bearer, feed the socket `auth.token`) — the prerequisite that makes chat/disputes authenticable. Backend is done + tested (15 dispute/chat tests). Deferred on 12 Aug 2026.
 
 ### Phase 6 — Dispute Resolution & Real-time Chat
@@ -568,7 +568,7 @@ The last five are enforced at boot: `index.js` exits 1 if `NODE_ENV=production` 
 ## Known Issues / Blockers
 
 - **[FIXED 12 Aug 2026]** `reconciliation.service.js` declared `reconcilePlatformAccount` twice as a top-level `const` → `SyntaxError: Identifier ... already declared`. Because it's imported via `wallet.controller → wallet.routes → index.js`, this crashed the entire server (and test suite) on boot. Removed the duplicate; kept the circuit-breaker-aware version. Verified: `node --check` passes and `NODE_ENV=test node -e "require('./src/index.js')"` loads clean.
-- **[OPEN]** `/api/ai` uses the legacy Text Completions API and an invalid model id — see Phase 5.5. Do not rely on it until migrated.
+- **[RESOLVED 14 Aug 2026]** `/api/ai` used the legacy Text Completions API (`/v1/complete`, `max_tokens_to_sample`) with an invalid model id `claude-3.5-mini`. Migrated to `POST /v1/messages` with a `messages[]` payload and model `claude-haiku-4-5-20241022`; response is read from `content[0].text`. Commit `3dc2114`. (Older notes describing this as OPEN are stale.)
 - **[FIXED 12 Aug 2026]** M-Pesa payment-confirmation hardening — plan [PLAN-mpesa-webhook-hardening.md](PLAN-mpesa-webhook-hardening.md), Steps 0–6. Closed three confirmed vulnerabilities: (1) **self-forgeable webhooks** — added `trust proxy` (`index.js`) + a fail-closed IP allowlist middleware (`mpesaIpAllowlist.middleware.js`) on both webhook routes, plus an independent STK Query re-confirmation gate before any settlement (`MPESA_REQUIRE_QUERY_CONFIRM`, default on); (2) **unvalidated amount** — the callback `Amount` and the admin-entered manual amount are now checked against `trade.amountKes`; a mismatch marks the txn `failed` and raises a `WEBHOOK_MISMATCH` FraudFlag without settling; (3) **replay** — `mpesaReceiptNumber` and `manualPayment.referenceCode` are now `unique + sparse`, with an E11000 duplicate-key treated as an idempotent no-op. Also stopped leaking `checkoutRequestId`/`merchantRequestId` in the STK trigger response, and stopped returning HTTP 500 for unknown/duplicate callbacks (now `200 {status:'ignored'}` so Daraja stops retrying). Verified: `node --check` clean, app boots under `NODE_ENV=test`, and the new `tests/mpesa.webhook.test.js` passes **12/12** (forgery, non-zero result, unknown-txn ack, amount mismatch, happy-path settlement, receipt replay, manual match/mismatch, + 4 allowlist unit tests) against a `MongoMemoryReplSet`. Step 7 (git hooks) intentionally out of scope. **Deploy note:** build the two unique indexes against a prod data copy first — a live build fails if duplicate receipts already exist; and re-verify `MPESA_ALLOWED_IPS` against current Safaricom egress ranges (they drift).
 - **[FIXED 12 Aug 2026]** `tests/auth.test.js` (was 8/14 red — pre-existing, independent of the M-Pesa work). Three causes: (1) **dominant** — `registerLimiter`/`loginLimiter` (`max: 5`, in-memory store) 429'd the 6th+ request because the counter never resets between tests, which cascaded into the `TypeError`/401 failures; (2) `register`/`login` deliver the refresh token as an httpOnly cookie (the frontend uses `withCredentials` + reads the `refreshToken` cookie), but the tests asserted `res.body.refreshToken`; (3) tests read `verifyToken` (a `select:false` field) without `.select('+verifyToken')` and posted an incomplete listing body. **Kept the secure cookie design** (confirmed correct against the client); fix was test-side (cookie assertions, `.select('+verifyToken')`, valid listing payload) + a `NODE_ENV==='test'` skip on the two limiters (`rateLimiter.middleware.js`, no production behaviour change). Verified: auth **14/14**, full suite **26/26** green.
 - **[FIXED 12 Aug 2026]** `listings.controller.js` `createListing` cast the *optional* `accountAgeYears` via `Number(accountAgeYears)`; when omitted this is `NaN`, which Mongoose refuses to cast → **HTTP 500** on every listing POST that left the field out. Fixed by only setting `accountAgeYears` on the document when it's actually provided (non-null / non-empty). Required numerics (`followers`, `priceKes`) are already guarded by the missing-fields check; `engagementRate` is a String and untouched. Regression covered: the "listing creation after email verification" test in `auth.test.js` now posts *without* `accountAgeYears` and asserts 201.
@@ -578,7 +578,7 @@ The last five are enforced at boot: `index.js` exits 1 if `NODE_ENV=production` 
 
 ## Next Session Goals
 
-**Saturday 16 Aug 2026 — Phase 7 backend done (UNCOMMITTED)**
+**Saturday 16 Aug 2026 — Phase 7 backend done (committed + merged, PR #7)**
 B2C payouts are code-complete and tested against plan [PLAN-phase7-b2c-payouts.md](PLAN-phase7-b2c-payouts.md), Steps 0–6. Delivered this session:
 - **Step 0 — ledger/reconciliation bugfix** (two P0s found in the pre-phase audit): `SELLER_PAYOUT` was being counted as a debit and `PLATFORM_FEE` was inside the wallet identity, so reconciliation drifted by the fee on every completed trade. Added the `WITHDRAWAL` ledger type. See ADR 31.
 - `PayoutQueue` model (one row per trade — `trade` is unique), `services/payout.service.js` (`sendB2C` / `processB2CResult` / `processB2CTimeout`), `jobs/payout.job.js` (BullMQ `payout-disbursements`, 3 attempts + exponential backoff, 4xx → `UnrecoverableError`, startup sweep for rows stranded at `approved`).
@@ -588,11 +588,11 @@ B2C payouts are code-complete and tested against plan [PLAN-phase7-b2c-payouts.m
 - **Jest green — 120/120** (`payout.test.js` 66). Not covered by tests: the `UnrecoverableError` classification and the startup sweep, both of which need live Redis.
 
 Focus next on:
-1. [ ] **Commit Phase 7** — 18 paths still uncommitted on `phase-6`. Then branch/PR; never push to `main`.
+1. [x] **Commit Phase 7** — committed on `phase-7` (`8567dac`) and merged to `main` via PR #7 (`836e6b1`).
 2. [ ] **Sandbox end-to-end B2C** — the one thing tests cannot prove: real Daraja credentials, real callbacks hitting the public URLs, `MPESA_ALLOWED_IPS` verified against current Safaricom egress.
 3. [ ] Phase 8 groundwork the payout design already leans on: a repeatable sweep + Transaction Status query, which is also what would make `failed` rows safely re-queueable.
 4. [~] **DEFERRED** — Phase 7 UI (admin payout queue, seller payout state in the trade room), blocked behind client access-token handling like Phases 5–6.
-5. [ ] Migrate `/api/ai` off the legacy `/v1/complete` API (still open from 12 Aug).
+5. [x] Migrate `/api/ai` off the legacy `/v1/complete` API — done in commit `3dc2114` (Messages API + `claude-haiku-4-5-20241022`).
 
 **Tuesday 12 Aug 2026 — Phase 6 backend done**
 Dispute resolution + real-time chat backend is code-complete and tested. Delivered this session:
@@ -604,8 +604,8 @@ Dispute resolution + real-time chat backend is code-complete and tested. Deliver
 Focus next on:
 1. [~] **DEFERRED** — Phase 6 frontend UI (chat panel, dispute button, admin disputes page, `socket.io-client`) + client access-token handling. See _Deferred Work_.
 2. [~] **DEFERRED** — Frontend API wiring for Phase 5 + end-to-end integration test.
-3. [ ] Migrate `/api/ai` off the legacy `/v1/complete` API to Messages API + a valid model id (or remove until needed).
-4. [x] **Phase 7 (backend) complete** — `PayoutQueue`, M-Pesa B2C, admin approval flow. Done 16 Aug 2026.
+3. [x] Migrate `/api/ai` off the legacy `/v1/complete` API to Messages API + a valid model id — done in commit `3dc2114` (14 Aug 2026).
+4. [x] **Phase 7 (backend) complete** — `PayoutQueue`, M-Pesa B2C, admin approval flow. Done 16 Aug 2026; merged via PR #7.
 
 **Friday 12 Aug 2026 — Backend confirmed through Phase 5**
 Phases 1–5 backend is code-complete and the app module boots clean (verified today). Focus next on:
@@ -613,7 +613,7 @@ Phases 1–5 backend is code-complete and the app module boots clean (verified t
 2. [~] **DEFERRED** — Frontend API wiring for Phase 5: STK Push UI, Manual Fallback UI, Admin manual-payment verification UI
 3. [~] **DEFERRED** — End-to-end integration test: register → verify → STK push → webhook → escrow lock → reveal → payout
 4. [x] Jest suite green — **26/26** (auth 14 + M-Pesa 12, `--runInBand`). Auth fixes were test-side + a test-env rate-limiter skip; secure cookie design kept (see Known Issues).
-5. [ ] Migrate `/api/ai` off the legacy `/v1/complete` API to Messages API + a valid model id (or remove until needed)
+5. [x] Migrate `/api/ai` off the legacy `/v1/complete` API to Messages API + a valid model id — done in commit `3dc2114`.
 6. [x] **Phase 6 (backend) complete** — Socket.io wired; Dispute controller/routes + admin resolution endpoint built + tested
 
 ---
@@ -653,4 +653,4 @@ A phase is complete only when:
 
 ---
 
-_Last updated: 12 Aug 2026 — Phases 1–5 backend confirmed against code; boot-time SyntaxError in reconciliation.service.js fixed; AI endpoint + admin/mpesa endpoints documented._
+_Last updated: 17 Oct 2026 — Phase 7 status corrected: committed on `phase-7` (`8567dac`) and merged via PR #7 (`836e6b1`), no longer uncommitted/`phase-6`. `/api/ai` legacy Text-Completions issue marked RESOLVED (Messages API, commit `3dc2114`). Dependency audit reconciled (client 18→6, server 52→38); deferred major upgrades documented in README._

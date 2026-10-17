@@ -34,11 +34,11 @@ export default function AdminListingsPage() {
       </div>
 
       <div className="space-y-6">
-        {data.length === 0 ? (
+        {(data ?? []).length === 0 ? (
           <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-500 shadow-sm">
             There are no listings in the admin queue.
           </div>
-        ) : data.map((listing) => (
+        ) : (data ?? []).map((listing) => (
           <div key={listing._id} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="grid gap-4 md:grid-cols-4">
               <div>

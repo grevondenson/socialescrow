@@ -243,10 +243,89 @@ exports.releaseCredentials = async (req, res, next) => {
   }
 };
 
+/**
+ * Buyer confirms receipt, releasing escrow to the seller and queuing their B2C payout.
+ * PATCH /api/trades/:id/confirm
+ *
+ * This is the happy-path terminal transition. Until it existed, `escrowService.release()` was
+ * reachable only from admin dispute resolution, so a trade that both parties were happy with
+ * could never move money — it stalled at `credentials_released` forever.
+ *
+ * `escrowService.release()` performs all the money movement AND sets the trade to `completed`,
+ * so this handler only authorizes, validates, and records an audit trail.
+ */
+exports.confirmReceipt = async (req, res, next) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    const tradeId = req.params.id;
+
+    const trade = await Trade.findById(tradeId).session(session);
+    if (!trade) {
+      await session.abortTransaction();
+      return res.status(404).json({ message: 'Trade not found' });
+    }
+
+    // Only the buyer may confirm — the seller must not be able to release their own escrow.
+    if (trade.buyer.toString() !== req.user.id) {
+      await session.abortTransaction();
+      return res.status(403).json({ message: 'Only the buyer can confirm this trade' });
+    }
+
+    // The seller must have released credentials first; `release()` enforces this again, but
+    // checking here keeps the error message meaningful instead of surfacing a 400 from below.
+    if (trade.status !== 'credentials_released') {
+      await session.abortTransaction();
+      return res.status(400).json({
+        message: 'Trade must be awaiting buyer confirmation before it can be completed',
+      });
+    }
+
+    // Money movement: seller pendingPayout += sellerPayoutKes, Buyer ESCROW_RELEASE ledger,
+    // PlatformAccount updated, EscrowRecord → released, PayoutQueue row created (parked at
+    // pending_approval unless AUTO_PAYOUT=true), and Trade → completed.
+    await escrowService.release(tradeId, session);
+
+    const [sysMsg] = await Message.create(
+      [{
+        trade: tradeId,
+        sender: req.user.id,
+        type: 'system',
+        content: `${req.user.fullName} confirmed receipt — escrow released to seller`,
+      }],
+      { session }
+    );
+
+    await AuditLog.create(
+      [{
+        action: 'trade_confirmed',
+        user: req.user.id,
+        metadata: { tradeId, amountKes: trade.amountKes, sellerPayoutKes: trade.sellerPayoutKes },
+      }],
+      { session }
+    );
+
+    await session.commitTransaction();
+
+    // Emit only after the transaction commits.
+    emitToTrade(tradeId, 'new_message', sysMsg);
+    emitToTrade(tradeId, 'trade_completed', { tradeId });
+
+    const completed = await Trade.findById(tradeId);
+    res.json(completed);
+  } catch (error) {
+    if (session.inTransaction()) await session.abortTransaction();
+    next(error);
+  } finally {
+    session.endSession();
+  }
+};
+
 // ── Helper ───────────────────────────────────────────────────
 // Returns true if the authenticated user is the buyer or seller of the trade.
 const isParticipant = (trade, userId) =>
   trade.buyer.toString() === userId || trade.seller.toString() === userId;
+
 
 /**
  * List chat messages for a trade (oldest first).

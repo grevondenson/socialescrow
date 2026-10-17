@@ -8,6 +8,7 @@ router.post('/', protect, requireVerifiedEmail, tradesCtrl.initiateTrade);
 router.get('/:id', protect, tradesCtrl.getTrade);
 router.patch('/:id/mock-payment', protect, tradesCtrl.mockPayment);
 router.patch('/:id/release', protect, tradesCtrl.releaseCredentials);
+router.patch('/:id/confirm', protect, tradesCtrl.confirmReceipt);
 
 // Real-time chat + disputes
 router.get('/:id/messages', protect, tradesCtrl.getMessages);

@@ -53,6 +53,12 @@ export default function TradeRoomPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['trade', id] })
   });
 
+  // Buyer confirms receipt — releases escrow to the seller and queues their payout.
+  const confirmMutation = useMutation({
+    mutationFn: () => api.patch(`/trades/${id}/confirm`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['trade', id] })
+  });
+
   const stkPushMutation = useMutation({
     mutationFn: async () => {
       const res = await api.post('/mpesa/stk-push', { tradeId: id, phoneNumber });
@@ -239,16 +245,41 @@ export default function TradeRoomPage() {
                   </p>
                 )}
 
-                {trade.status === 'credentials_released' && !decrypted && (
-                  <div>
-                    <p className="mb-4 text-sm text-gray-600">Seller has released the credentials. You can now reveal them.</p>
-                    <button 
-                      onClick={() => revealMutation.mutate()}
-                      disabled={revealMutation.isPending || trade.vaultRevealed}
-                      className="w-full rounded-md bg-blue-600 py-2 font-bold text-white hover:bg-blue-700 disabled:bg-blue-300"
-                    >
-                      {trade.vaultRevealed ? 'Already Revealed' : (revealMutation.isPending ? 'Revealing...' : 'Reveal Credentials')}
-                    </button>
+                {trade.status === 'credentials_released' && (
+                  <div className="space-y-4">
+                    {!decrypted && (
+                      <div>
+                        <p className="mb-4 text-sm text-gray-600">Seller has released the credentials. You can now reveal them.</p>
+                        <button
+                          onClick={() => revealMutation.mutate()}
+                          disabled={revealMutation.isPending || trade.vaultRevealed}
+                          className="w-full rounded-md bg-blue-600 py-2 font-bold text-white hover:bg-blue-700 disabled:bg-blue-300"
+                        >
+                          {trade.vaultRevealed ? 'Already Revealed' : (revealMutation.isPending ? 'Revealing...' : 'Reveal Credentials')}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Buyer confirms receipt — releases escrow to the seller and queues their
+                        payout. Irreversible, so the copy says so plainly. */}
+                    <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-sm text-gray-600">
+                        Confirmed you received what you paid for? Confirming releases the escrowed
+                        funds to the seller. This cannot be undone.
+                      </p>
+                      <button
+                        onClick={() => confirmMutation.mutate()}
+                        disabled={confirmMutation.isPending}
+                        className="mt-3 w-full rounded-md bg-emerald-600 py-2 font-bold text-white hover:bg-emerald-700 disabled:bg-emerald-300"
+                      >
+                        {confirmMutation.isPending ? 'Confirming...' : 'Confirm Receipt & Release Funds'}
+                      </button>
+                      {confirmMutation.error && (
+                        <p className="mt-2 text-sm text-red-500">
+                          {(confirmMutation.error as any).response?.data?.message || 'Failed to confirm the trade'}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 )}
 

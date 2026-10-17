@@ -10,6 +10,10 @@ const auditLogSchema = new mongoose.Schema({
       'email_verify_request', 'email_verified',
       'VAULT_SUBMIT', 'VAULT_REVEAL', 'VAULT_REVEAL_ATTEMPT_FAILED',
       'dispute_raised', 'dispute_resolved',
+      // Written by trades.controller.confirmReceipt — the buyer's terminal "received, release
+      // the funds" action. Missing from the enum, which made the audit write reject the whole
+      // confirm transaction and the endpoint return 400.
+      'trade_confirmed',
       // Written by admin.controller.toggleCircuitBreaker — the payout kill switch Phase 7
       // depends on. It was missing, so the audit write threw *after* PlatformAccount had
       // already been updated and the admin got a 500 for a breaker that had actually flipped.

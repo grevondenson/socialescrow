@@ -359,6 +359,7 @@ const resolveDispute = async (req, res, next) => {
 
 // ── Payouts (Phase 7: M-Pesa B2C) ────────────────────────────
 const PAYOUT_STATUSES = ['pending_approval', 'approved', 'processing', 'sent', 'failed', 'cancelled'];
+const FRAUD_RISK_LEVELS = ['low', 'medium', 'high', 'blocked'];
 
 /**
  * Builds an error the central error middleware can map. `statusCode` sets the HTTP status,
@@ -369,6 +370,45 @@ const _httpError = (statusCode, message, code) => {
   err.statusCode = statusCode;
   err.code = code;
   return err;
+};
+
+/**
+ * @desc    List fraud flags, newest first. Optional `?resolved=`, `?riskLevel=` filters.
+ * @route   GET /api/admin/fraud-flags?resolved=false&riskLevel=high&page=1&per_page=50
+ * @access  Private/Admin
+ *
+ * FraudFlag has existed (and been written to — VAULT_DOUBLE_REVEAL, WEBHOOK_MISMATCH,
+ * RECONCILIATION_MISMATCH) since Phase 3, but nothing could read it back until now.
+ */
+const getFraudFlags = async (req, res, next) => {
+  try {
+    const { resolved, riskLevel } = req.query;
+    if (riskLevel && !FRAUD_RISK_LEVELS.includes(riskLevel)) {
+      throw _httpError(400, `riskLevel must be one of: ${FRAUD_RISK_LEVELS.join(', ')}`, 'INVALID_RISK_LEVEL');
+    }
+
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const perPage = Math.min(Math.max(parseInt(req.query.per_page, 10) || 50, 1), 100);
+
+    const filter = {};
+    if (resolved !== undefined) filter.resolved = resolved === 'true';
+    if (riskLevel) filter.riskLevel = riskLevel;
+
+    const [flags, total] = await Promise.all([
+      FraudFlag.find(filter)
+        .populate('user', 'fullName email')
+        .populate({ path: 'trade', select: 'amountKes status buyer seller' })
+        .sort({ createdAt: -1 })
+        .limit(perPage)
+        .skip((page - 1) * perPage)
+        .lean(),
+      FraudFlag.countDocuments(filter),
+    ]);
+
+    res.json({ data: flags, meta: { total, page, per_page: perPage } });
+  } catch (error) {
+    next(error);
+  }
 };
 
 /**
@@ -610,6 +650,7 @@ module.exports = {
   adminRemoveListing,
   getDisputes,
   resolveDispute,
+  getFraudFlags,
   getPayouts,
   approvePayout,
   rejectPayout,

@@ -4,8 +4,8 @@ import { cookies } from 'next/headers';
 
 async function getListing(id: string) {
   try {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
-    const res = await fetch(`${apiUrl}/api/listings/${id}`, {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+    const res = await fetch(`${apiUrl}/listings/${id}`, {
       cache: 'no-store', // Always fetch latest state
     });
     if (!res.ok) return null;
