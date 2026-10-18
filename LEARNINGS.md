@@ -45,7 +45,7 @@
 ### ✅ What I Built
 
 **Core Authentication System**
-- JWT-based authentication with 15-minute access tokens and 7-day refresh tokens
+- JWT-based authentication with 15-minute access tokens and 30-day refresh tokens
 - Password hashing using bcrypt with salt rounds for production security
 - Separate refresh token endpoint for obtaining new access without re-authentication
 - User registration with automatic wallet creation on signup
@@ -86,7 +86,7 @@
 - Supertest integration for HTTP endpoint testing
 - MongoDB Memory Server for isolated, in-memory test database
 - App refactored to export separately from server startup (clean testing)
-- Comprehensive test suite with 40+ test cases covering:
+- Comprehensive test suite with 14 test cases covering:
   - Registration flow and wallet creation
   - Login success/failure scenarios
   - Email verification gates
@@ -121,7 +121,7 @@
 | Rate Limiting | ✅ | Login (5/15m) & Register (5/60m) |
 | Audit Logging | ✅ | All actions tracked with metadata |
 | Email Gate | ✅ | Listing creation requires verification |
-| Test Suite | ✅ | 40+ tests, MongoDB Memory Server |
+| Test Suite | ✅ | 14 tests, MongoDB Memory Server |
 | CI/CD Ready | ✅ | App exports for Supertest testing |
 
 ### 🔍 What Surprised Me
@@ -161,7 +161,7 @@
 - **Files Created**: 4 (AuditLog.model.js, rateLimiter.middleware.js, jest.config.js, auth.test.js)
 - **Files Modified**: 10 (controllers, middleware, routes, models, index.js)
 - **Lines of Code**: ~10,000+ (including tests and configs)
-- **Test Coverage**: 40+ comprehensive test cases
+- **Test Coverage**: 14 comprehensive test cases
 - **Dependencies Added**: jest, supertest, mongodb-memory-server
 - **Commits**: 1 comprehensive Phase 1 commit + git-commit-writer skill
 
@@ -173,9 +173,9 @@
 
 ### ✅ What I Built
 **Secure Credential Vault**
-- **AES-256-CBC Encryption**: Built a robust `vault.service.js` that uses a 32-byte hex key. It generates a unique random 16-byte IV for every encryption call, ensuring identical plaintext results in unique ciphertext.
+- **AES-256-GCM Encryption**: Built a robust `vault.service.js` that uses a 32-byte hex master key to wrap a fresh per-record 32-byte data key. Each encryption uses a unique random 12-byte IV and stores the GCM auth tag, so identical plaintext produces unique, tamper-detecting ciphertext.
 - **Startup Security Guard**: Implemented a fatal startup check in `index.js` to validate the `VAULT_ENCRYPTION_KEY` length before the server starts, preventing silent failures.
-- **Atomic One-Time Reveal**: Used MongoDB's `findOneAndUpdate({ revealed: false })` to ensure credentials can only be revealed exactly once.
+- **Atomic One-Time Reveal**: The reveal controller uses MongoDB's `findOneAndUpdate({ revealed: false })` to flip the record atomically, so credentials can be revealed exactly once (the service itself only exports encrypt/decrypt).
 
 **Trade Lifecycle & Escrow Logic**
 - **Race Condition Prevention**: `initiateTrade` now uses an atomic status update on the `Listing` model to prevent multiple buyers from locking the same account simultaneously.
@@ -198,3 +198,83 @@
 - Node.js `crypto` module documentation.
 - MongoDB `findOneAndUpdate` atomic operators.
 - React Query `refetchInterval` patterns for real-time UIs without WebSockets.
+
+---
+
+## Entry 5 — 18 October 2026
+**Phase**: 5 / 6 / 7 UI debt + 9 — Deferred UI cleared, design system installed
+**Focus**: Finding out *why* three phases of "finished" UI never looked finished, then building it properly.
+
+### ✅ What I Built
+
+**The diagnosis, first**
+- The client had no styling layer at all: no `tailwindcss` dependency, no `tailwind.config`,
+  no `postcss.config`, and no `@tailwind` directives in `globals.css`. Yet roughly ninety per cent
+  of the markup was written in Tailwind utilities. Every one of those classes was inert — the
+  marketplace, listing detail, trade room and eight admin panels were rendering as unstyled HTML
+  inside a default `main { padding: 4rem }`. The build passed the whole time, because class strings
+  are never validated.
+- Three phases of "deferred UI" were not deferred because the pages weren't written. They were
+  deferred because nobody could see whether they were any good.
+
+**Design system — "Vault Ledger"**
+- Token set in `tailwind.config.ts`: `ink #0E211C`, `paper #F5F6F2`, `forest #14543F`, `mint`,
+  `ochre`, `clay`, and a green-tinted neutral ramp. Two radii (card / control). No indigo — the
+  codebase's accidental default — and no stock `#22c55e`.
+- Bricolage Grotesque for display, Instrument Sans for body, both via `next/font`. Money in
+  tabular figures rather than a monospace face.
+- Twelve primitives in `components/ui/` and `lib/status.ts` as the one status vocabulary, replacing
+  five separate `replace(/_/g,' ')` calls and per-page `STATUS_STYLES` maps.
+- One deliberate device: the escrow status rail. Five fixed stations, timestamped, so a buyer can
+  read whose turn it is without reading anything else.
+
+**Trade room (Phases 5, 6, 7)**
+- Split one 365-line component into `TradeRoom`, `StatusRail`, `PaymentPanel`, `CredentialsPanel`,
+  `ChatPanel`, `DisputePanel`, `PayoutPanel`.
+- Socket client whose `auth` is a function, so every reconnect re-reads the in-memory access token.
+- Dispute dialog requiring a written reason; release control disappears while disputed.
+- Seller payout state in the room, fed by a new seller-only endpoint.
+
+**Admin console (Phase 9)**
+- Sidebar shell, overview with queue counts and the circuit-breaker control behind a confirm dialog,
+  trades table, users directory with ban **and unban**.
+
+**Server**
+- New: `GET /admin/stats`, `GET /admin/trades`, `GET /admin/users`, `PATCH /admin/users/:id/unban`,
+  `GET /trades/:id/payout`; `vaultRevealedAt` exposed on `getTrade`.
+
+### 🔍 What Surprised Me
+- **A missing dependency can masquerade as unfinished work for three phases.** Every session that
+  said "the UI is deferred" was looking at a page that had been written. The honest description was
+  "the UI is written and cannot render."
+- **Mongoose silently drops unknown paths on create.** Six `AuditLog.create` call sites still wrote
+  `user:` after the schema field had been renamed to `userId`. No error, no warning — the rows were
+  written with no actor at all. That is the worst possible failure mode for an audit trail: it looks
+  populated until you ask who did it.
+- **`.populate('buyer', 'name email')` on a model with `fullName` is silent too.** The trade room had
+  been rendering blank party names, and nothing in the build or the tests noticed.
+- **css-loader resolves `url()` inside CSS, including data URIs**, so an inlined SVG chevron in
+  `globals.css` failed the build as `Can't resolve './...'`. Moving it to an inline style fixed it.
+
+### 💡 What I'd Do Differently
+- **Verify the toolchain before writing the first class.** A five-second look at `package.json`
+  would have caught this. "It builds" is not the same as "it applies".
+- **Test the audit trail's contents, not just its existence.** The payout tests asserted
+  `AuditLog.findOne(...)` was non-null; they did not assert the actor on every action, so a
+  schema rename broke six writers unnoticed. Assert the fields that make the record useful.
+- **Keep a single status vocabulary from day one.** Four admin pages each inventing a tone map is
+  how `payment_window` ends up looking like a different state on four screens.
+
+### 🧰 Resources That Helped
+- Next.js CSS/module-not-found guidance for the `url()` resolution failure.
+- Socket.io client docs on `auth` as an async function for rotating tokens.
+- React Query v5 `refetchInterval` as a function, for polling only while a socket is down.
+
+### 📊 Statistics
+- **Client:** 22/22 routes built, zero type errors. New: `tailwind.config.ts`, `postcss.config.js`,
+  12 primitives, 7 trade components, 2 layout components, `lib/status.ts`, `lib/socket.ts`,
+  `hooks/useTradeSocket.ts`, `lib/services/trade.ts`.
+- **Server:** 5 new endpoints; 2 pre-existing bugs fixed; **140/140 tests across 8 suites**
+  (was 135/135 across 7).
+- **Not proven:** the full money journey against live Daraja. Still needs sandbox credentials and a
+  public callback URL.

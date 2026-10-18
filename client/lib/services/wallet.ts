@@ -20,7 +20,10 @@ export type LedgerEntryType =
   | 'PLATFORM_FEE'
   | 'SELLER_PAYOUT'
   | 'REFUND'
-  | 'DISPUTE_HOLD';
+  | 'DISPUTE_HOLD'
+  // Written by wallet.service.js on every successful B2C payout. It was missing here, so a
+  // real-withdrawal ledger row could never be typed as this union.
+  | 'WITHDRAWAL';
 
 export interface LedgerEntry {
   _id: string;

@@ -4,8 +4,13 @@ const { protect, requireRole } = require('../middleware/auth.middleware');
 
 router.get('/audit-log', protect, requireRole('admin'), adminCtrl.getAuditLogs);
 router.patch('/users/:id/ban', protect, requireRole('admin'), adminCtrl.banUser);
+router.patch('/users/:id/unban', protect, requireRole('admin'), adminCtrl.unbanUser);
+router.get('/users', protect, requireRole('admin'), adminCtrl.getUsers);
 router.get('/users/kyc-review', protect, requireRole('admin'), adminCtrl.getPendingKycUsers);
 router.patch('/users/:id/kyc-review', protect, requireRole('admin'), adminCtrl.reviewKycUser);
+
+router.get('/trades', protect, requireRole('admin'), adminCtrl.getTrades);
+router.get('/stats', protect, requireRole('admin'), adminCtrl.getStats);
 
 router.get('/listings', protect, requireRole('admin'), adminCtrl.getAdminListings);
 router.patch('/listings/:id/moderation', protect, requireRole('admin'), adminCtrl.reviewListing);

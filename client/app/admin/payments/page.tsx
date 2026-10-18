@@ -35,12 +35,40 @@ export default function AdminPaymentsPage() {
   });
 
   const verifyMutation = useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: 'verified' | 'rejected' }) => {
-      const res = await api.patch(`/mpesa/manual-payment/${id}/verify`, { status });
+    mutationFn: async ({
+      id,
+      status,
+      amountKes,
+    }: {
+      id: string;
+      status: 'verified' | 'rejected';
+      amountKes?: number;
+    }) => {
+      // The server rejects `verified` with 400 unless the received amount is supplied
+      // (mpesa.controller.js): it records what actually landed, which may differ from the
+      // trade amount. Previously we sent only { status }, so every approval failed.
+      const res = await api.patch(`/mpesa/manual-payment/${id}/verify`, { status, amountKes });
       return res.data;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin', 'manualPayments'] }),
   });
+
+  /** Ask for the received amount, pre-filled with the expected trade amount. */
+  const approveManually = (payment: PendingManualPayment) => {
+    const input = window.prompt(
+      'Enter the amount actually received in M-Pesa (KES):',
+      String(payment.trade.amountKes),
+    );
+    if (input === null) return; // cancelled
+
+    const amountKes = Number(input.replace(/,/g, '').trim());
+    if (!Number.isFinite(amountKes) || amountKes <= 0) {
+      window.alert('Enter a valid positive amount.');
+      return;
+    }
+
+    verifyMutation.mutate({ id: payment._id, status: 'verified', amountKes });
+  };
 
   if (isLoading) return <div className="p-8 text-center">Loading pending payments...</div>;
   if (isError) return <div className="p-8 text-center text-red-500">Failed to load pending payments.</div>;
@@ -102,7 +130,7 @@ export default function AdminPaymentsPage() {
               <div className="mt-6 flex flex-col gap-3 sm:flex-row">
                 <button
                   type="button"
-                  onClick={() => verifyMutation.mutate({ id: payment._id, status: 'verified' })}
+                  onClick={() => approveManually(payment)}
                   disabled={verifyMutation.isPending}
                   className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:bg-slate-300"
                 >

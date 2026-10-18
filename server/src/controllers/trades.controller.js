@@ -2,6 +2,7 @@ const Trade = require('../models/Trade.model');
 const Listing = require('../models/Listing.model');
 const CredentialVault = require('../models/CredentialVault.model');
 const MpesaTransaction = require('../models/MpesaTransaction.model');
+const PayoutQueue = require('../models/PayoutQueue.model');
 const Message = require('../models/Message.model');
 const Dispute = require('../models/Dispute.model');
 const AuditLog = require('../models/AuditLog.model');
@@ -127,8 +128,10 @@ exports.getTrade = async (req, res, next) => {
   try {
     const trade = await Trade.findById(req.params.id)
       .populate('listing')
-      .populate('buyer', 'name email kycVerified')
-      .populate('seller', 'name email kycVerified');
+      // `fullName` is the field on User.model. The old `name` selection matched nothing,
+      // so both party names were always undefined in the trade room.
+      .populate('buyer', 'fullName email kycVerified')
+      .populate('seller', 'fullName email kycVerified');
 
     if (!trade) {
       return res.status(404).json({ message: 'Trade not found' });
@@ -146,6 +149,9 @@ exports.getTrade = async (req, res, next) => {
     const tradeObj = trade.toObject();
     tradeObj.hasVaultCredentials = !!vault;
     tradeObj.vaultRevealed = vault ? vault.revealed : false;
+    // The reveal timestamp drives the status rail's "Revealed once" station; it lives on
+    // the vault, not on Trade, so it has to be lifted explicitly.
+    tradeObj.vaultRevealedAt = vault?.revealed ? vault.revealedAt ?? null : null;
 
     const pendingManualPayment = await MpesaTransaction.findOne({
       trade: trade._id,
@@ -299,7 +305,7 @@ exports.confirmReceipt = async (req, res, next) => {
     await AuditLog.create(
       [{
         action: 'trade_confirmed',
-        user: req.user.id,
+        userId: req.user.id,
         metadata: { tradeId, amountKes: trade.amountKes, sellerPayoutKes: trade.sellerPayoutKes },
       }],
       { session }
@@ -449,7 +455,7 @@ exports.raiseDispute = async (req, res, next) => {
     await AuditLog.create(
       [{
         action: 'dispute_raised',
-        user: req.user.id,
+        userId: req.user.id,
         metadata: { tradeId, disputeId: dispute._id, reason: reason.trim() },
       }],
       { session }
@@ -467,5 +473,35 @@ exports.raiseDispute = async (req, res, next) => {
     next(error);
   } finally {
     session.endSession();
+  }
+};
+
+/**
+ * Seller-facing payout state for one trade.
+ *
+ * PayoutQueue is otherwise admin-only. The seller is entitled to know where their money
+ * is — pending approval, approved, sending, sent, or failed — without seeing anyone
+ * else's queue. The buyer gets 403: the payout is not their business, and the seller's
+ * bank/M-Pesa details sit behind it.
+ *
+ * GET /api/trades/:id/payout
+ */
+exports.getTradePayout = async (req, res, next) => {
+  try {
+    const trade = await Trade.findById(req.params.id).select('seller buyer');
+    if (!trade) return res.status(404).json({ message: 'Trade not found' });
+
+    if (trade.seller.toString() !== req.user.id) {
+      return res.status(403).json({ message: 'Only the seller can view this payout' });
+    }
+
+    // Lean + explicit select: never leak Daraja payloads or the result blob to the client.
+    const payout = await PayoutQueue.findOne({ trade: trade._id })
+      .select('status amountKes queuedAt approvedAt sentAt lastError')
+      .lean();
+
+    res.json(payout);
+  } catch (error) {
+    next(error);
   }
 };

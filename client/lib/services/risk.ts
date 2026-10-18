@@ -88,9 +88,8 @@ export interface AuditLogEntry {
   _id: string;
   action: string;
   /**
-   * The schema field is `user`, but several controllers write `userId` and
-   * getAuditLogs populates `userId`. Read both so the actor renders whichever
-   * the API actually returns.
+   * `userId` is canonical: AuditLog writes and getAuditLogs' populate() both
+   * use it. `user` is only a legacy fallback, so read `userId` first.
    */
   user?: AuditActor | string | null;
   userId?: AuditActor | string | null;
@@ -132,17 +131,17 @@ export const humanizeAction = (action: string): string => {
 /** `NEW_ACCOUNT_HIGH_VALUE` -> "New account high value". */
 export const humanizeFlagType = (flagType: string): string => humanizeAction(flagType);
 
-/** Best-effort actor label from either audit-log shape. */
+/** Best-effort actor label; `userId` is canonical, `user` is a legacy fallback. */
 export const auditActorLabel = (entry: AuditLogEntry): string => {
-  const actor = entry.user ?? entry.userId ?? null;
+  const actor = entry.userId ?? entry.user ?? null;
   if (!actor) return 'System';
   if (typeof actor === 'string') return actor;
   return actor.fullName || actor.email || actor._id || 'Unknown';
 };
 
-/** Best-effort actor id from either audit-log shape. */
+/** Best-effort actor id; `userId` is canonical, `user` is a legacy fallback. */
 export const actorIdOf = (entry: AuditLogEntry): string | null => {
-  const actor = entry.user ?? entry.userId ?? null;
+  const actor = entry.userId ?? entry.user ?? null;
   if (!actor) return null;
   return typeof actor === 'string' ? actor : actor._id;
 };

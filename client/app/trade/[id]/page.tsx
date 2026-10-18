@@ -1,365 +1,124 @@
 'use client';
 
-import { useParams } from 'next/navigation';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useParams, useRouter } from 'next/navigation';
+import { useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { AppShell } from '../../../components/layout/AppShell';
+import { TradeRoom } from '../../../components/trade/TradeRoom';
+import { ErrorState, Skeleton } from '../../../components/ui/States';
+import { useTradeSocket } from '../../../hooks/useTradeSocket';
 import { api } from '../../../lib/api';
-import { formatKES } from '../../../lib/utils';
-import React, { useState, useEffect } from 'react';
+import { fetchTrade, fetchTradePayout, type Trade } from '../../../lib/services/trade';
 
+interface Me {
+  _id: string;
+  fullName?: string;
+  email?: string;
+  phone?: string;
+  role?: string;
+}
+
+/**
+ * Trade room route.
+ *
+ * Deliberately thin: fetch, gate, hand off. All interaction lives in
+ * components/trade/*. The socket joins the room as soon as the trade is known, and the
+ * query only polls while the socket is not connected (3s was previously unconditional,
+ * which burned battery and bandwidth on a connection that already had live updates).
+ */
 export default function TradeRoomPage() {
-  const { id } = useParams();
-  const queryClient = useQueryClient();
-  const [decrypted, setDecrypted] = useState<string | null>(null);
-  const [timer, setTimer] = useState(0);
-  const [credentialsInput, setCredentialsInput] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [stkMessage, setStkMessage] = useState('');
-  const [stkError, setStkError] = useState('');
-  const [manualReferenceCode, setManualReferenceCode] = useState('');
-  const [manualError, setManualError] = useState('');
-  const [manualSuccess, setManualSuccess] = useState('');
-  
-  // 1. Fetch current user
-  const { data: user } = useQuery({
+  const { id } = useParams<{ id: string }>();
+  const router = useRouter();
+
+  const meQuery = useQuery({
     queryKey: ['me'],
-    queryFn: async () => {
-      const res = await api.get('/auth/me');
-      return res.data;
-    }
+    queryFn: async () => (await api.get('/auth/me')).data as Me,
   });
 
-  // 2. Fetch trade data with polling
-  const { data: trade, isLoading, error } = useQuery({
+  const tradeQuery = useQuery({
     queryKey: ['trade', id],
-    queryFn: async () => {
-      const res = await api.get(`/trades/${id}`);
-      return res.data;
-    },
-    refetchInterval: 3000, // 3s polling
-    refetchOnWindowFocus: false,
+    queryFn: () => fetchTrade(id),
+    enabled: Boolean(id),
+    // Fallback only — the socket invalidates this query on every state change.
+    refetchInterval: (query) => (query.state.data ? 15_000 : false),
+    refetchOnWindowFocus: true,
   });
 
-  // 3. Mutations
-  const submitVaultMutation = useMutation({
-    mutationFn: () => api.post(`/trades/${id}/vault`, { credentials: credentialsInput }),
-    onSuccess: () => {
-      setCredentialsInput('');
-      queryClient.invalidateQueries({ queryKey: ['trade', id] });
-    }
+  const { state: socketState } = useTradeSocket(id);
+
+  const me = meQuery.data;
+  const trade = tradeQuery.data;
+  const isSeller = Boolean(me && trade && me._id === trade.seller?._id?.toString());
+
+  // Seller-only payout state. Fetched separately because the admin payout row is not
+  // part of the trade document and must not be exposed to the buyer.
+  const payoutQuery = useQuery({
+    queryKey: ['trade', id, 'payout'],
+    queryFn: () => fetchTradePayout(id),
+    enabled: isSeller,
+    refetchInterval: socketState === 'connected' ? false : 20_000,
   });
 
-  const releaseMutation = useMutation({
-    mutationFn: () => api.patch(`/trades/${id}/release`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['trade', id] })
-  });
-
-  // Buyer confirms receipt — releases escrow to the seller and queues their payout.
-  const confirmMutation = useMutation({
-    mutationFn: () => api.patch(`/trades/${id}/confirm`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['trade', id] })
-  });
-
-  const stkPushMutation = useMutation({
-    mutationFn: async () => {
-      const res = await api.post('/mpesa/stk-push', { tradeId: id, phoneNumber });
-      return res.data;
-    },
-    onSuccess: () => {
-      setStkMessage('STK Push sent. Check your phone and enter your M-Pesa PIN.');
-      setStkError('');
-      queryClient.invalidateQueries({ queryKey: ['trade', id] });
-    },
-    onError: (error: any) => {
-      setStkError(error.response?.data?.message || 'Failed to initiate STK Push');
-      setStkMessage('');
-    }
-  });
-
-  const submitManualPaymentMutation = useMutation({
-    mutationFn: async () => {
-      const res = await api.post('/mpesa/manual-payment', {
-        tradeId: id,
-        referenceCode: manualReferenceCode,
-        phoneNumber,
-      });
-      return res.data;
-    },
-    onSuccess: () => {
-      setManualSuccess('Manual payment request submitted. Awaiting admin verification.');
-      setManualError('');
-      setManualReferenceCode('');
-      queryClient.invalidateQueries({ queryKey: ['trade', id] });
-    },
-    onError: (error: any) => {
-      setManualError(error.response?.data?.message || 'Failed to submit manual payment request');
-      setManualSuccess('');
-    }
-  });
-
-  const revealMutation = useMutation({
-    mutationFn: async () => {
-      const res = await api.get(`/trades/${id}/vault/reveal`);
-      return res.data;
-    },
-    onSuccess: (data) => {
-      setDecrypted(data.credentials);
-      setTimer(60);
-    }
-  });
-
+  // 401 after the refresh-and-retry chain is exhausted: send them to sign in, then back.
   useEffect(() => {
-    if (user?.phone) {
-      setPhoneNumber(user.phone);
+    if (meQuery.isError) {
+      const status = (meQuery.error as { response?: { status?: number } })?.response?.status;
+      if (status === 401) router.replace(`/login?next=/trade/${id}`);
     }
-  }, [user?.phone]);
+  }, [meQuery.isError, meQuery.error, router, id]);
 
-  // 4. Timer Logic & Cleanup
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (timer > 0) {
-      interval = setInterval(() => {
-        setTimer((prev) => prev - 1);
-      }, 1000);
-    } else if (timer === 0 && decrypted) {
-      setDecrypted(null);
-    }
+  if (tradeQuery.isLoading || meQuery.isLoading) {
+    return (
+      <AppShell width="default">
+        <div className="space-y-4">
+          <Skeleton className="h-10 w-64" />
+          <div className="grid gap-6 lg:grid-cols-3">
+            <Skeleton className="h-72 lg:col-span-2" />
+            <Skeleton className="h-72" />
+          </div>
+        </div>
+      </AppShell>
+    );
+  }
 
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [timer, decrypted]);
+  if (tradeQuery.isError) {
+    const status = (tradeQuery.error as { response?: { status?: number } })?.response?.status;
+    const forbidden = status === 403 || status === 404;
+    return (
+      <AppShell width="default">
+        <ErrorState
+          title={forbidden ? 'This trade is not yours to view' : 'The trade room did not load'}
+          description={
+            forbidden
+              ? 'Only the buyer and the seller can open a trade room.'
+              : undefined
+          }
+          onRetry={() => void tradeQuery.refetch()}
+        />
+      </AppShell>
+    );
+  }
 
-  // Mandatory memory wipe on unmount
-  useEffect(() => {
-    return () => {
-      setDecrypted(null);
-    };
-  }, []);
+  if (!trade) {
+    return (
+      <AppShell width="default">
+        <ErrorState title="Trade not found" onRetry={() => void tradeQuery.refetch()} />
+      </AppShell>
+    );
+  }
 
-  if (isLoading || !user) return <div className="p-8 text-center">Loading trade room...</div>;
-  if (error || !trade) return <div className="p-8 text-center text-red-500">Error loading trade.</div>;
-
-  const isBuyer = user._id?.toString() === trade.buyer?._id?.toString();
-  const isSeller = user._id?.toString() === trade.seller?._id?.toString();
+  const tradeWithPayout: Trade = isSeller
+    ? { ...trade, payout: payoutQuery.data ?? null }
+    : trade;
 
   return (
-    <div className="mx-auto max-w-4xl p-6">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-slate-900">Trade Room</h1>
-        <div className="rounded-full bg-blue-100 px-4 py-1 text-sm font-semibold text-blue-700 uppercase">
-          {trade.status?.replace(/_/g, ' ')}
-        </div>
-      </div>
-
-      <div className="grid gap-6 md:grid-cols-3">
-        {/* Main Info */}
-        <div className="md:col-span-2 space-y-6">
-          <div className="rounded-lg border bg-white p-6 shadow-sm">
-            <h2 className="mb-4 text-lg font-semibold border-b pb-2 text-slate-800">Listing Details</h2>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <p className="text-sm text-gray-500">Platform</p>
-                <p className="font-medium">{trade.listing?.platform}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Niche</p>
-                <p className="font-medium">{trade.listing?.niche}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Price</p>
-                <p className="font-medium">{formatKES(trade.amountKes)}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Platform Fee</p>
-                <p className="font-medium text-slate-600">{formatKES(trade.platformFeeKes)}</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Action Panel */}
-          <div className="rounded-lg border bg-white p-6 shadow-sm">
-            <h2 className="mb-4 text-lg font-semibold border-b pb-2 text-slate-800">Actions</h2>
-            
-            {/* Buyer View */}
-            {isBuyer && (
-              <div className="space-y-4">
-                {trade.status === 'payment_window' && (
-                  <div className="space-y-4">
-                    <p className="mb-4 text-sm text-gray-600">Complete payment with M-Pesa to lock funds in escrow.</p>
-                    <label className="block text-sm font-medium text-slate-700">Phone number</label>
-                    <input
-                      type="tel"
-                      value={phoneNumber}
-                      onChange={(e) => setPhoneNumber(e.target.value)}
-                      placeholder="07XXXXXXXX"
-                      className="w-full rounded-md border p-3 text-sm focus:ring-2 focus:ring-blue-500"
-                    />
-                    <button 
-                      onClick={() => stkPushMutation.mutate()}
-                      disabled={!phoneNumber || stkPushMutation.isPending}
-                      className="w-full rounded-md bg-green-600 py-2 font-bold text-white hover:bg-green-700 disabled:bg-green-300"
-                    >
-                      {stkPushMutation.isPending ? 'Sending STK Push...' : `Pay ${formatKES(trade.amountKes)} with M-Pesa`}
-                    </button>
-                    {stkMessage && <p className="text-sm text-green-600">{stkMessage}</p>}
-                    {stkError && <p className="text-sm text-red-500">{stkError}</p>}
-
-                    {trade.manualPayment?.status === 'submitted' && (
-                      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                        Manual payment request submitted. Waiting for admin verification.
-                      </div>
-                    )}
-
-                    {trade.manualPayment?.status !== 'submitted' && (
-                      <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                        <h3 className="mb-3 text-sm font-semibold text-slate-900">Manual payment fallback</h3>
-                        <p className="mb-3 text-sm text-slate-600">If M-Pesa STK Push fails, submit the M-Pesa reference code and our support team will verify it manually.</p>
-                        <label className="block text-sm font-medium text-slate-700">M-Pesa reference code</label>
-                        <input
-                          type="text"
-                          value={manualReferenceCode}
-                          onChange={(e) => setManualReferenceCode(e.target.value)}
-                          placeholder="e.g. AB12345XYZ"
-                          className="mt-2 w-full rounded-md border p-3 text-sm focus:ring-2 focus:ring-blue-500"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => submitManualPaymentMutation.mutate()}
-                          disabled={!manualReferenceCode || submitManualPaymentMutation.isPending}
-                          className="mt-3 w-full rounded-md bg-orange-600 py-2 font-bold text-white hover:bg-orange-700 disabled:bg-orange-300"
-                        >
-                          {submitManualPaymentMutation.isPending ? 'Submitting...' : 'Submit Manual Payment Request'}
-                        </button>
-                        {manualSuccess && <p className="mt-2 text-sm text-green-600">{manualSuccess}</p>}
-                        {manualError && <p className="mt-2 text-sm text-red-500">{manualError}</p>}
-                      </div>
-                    )}
-                  </div>
-                )}
-                
-                {trade.status === 'paid' && (
-                  <p className="text-center py-4 text-gray-500 italic">
-                    {trade.hasVaultCredentials 
-                      ? 'Seller has submitted credentials. Waiting for release...' 
-                      : 'Waiting for seller to submit credentials...'}
-                  </p>
-                )}
-
-                {trade.status === 'credentials_released' && (
-                  <div className="space-y-4">
-                    {!decrypted && (
-                      <div>
-                        <p className="mb-4 text-sm text-gray-600">Seller has released the credentials. You can now reveal them.</p>
-                        <button
-                          onClick={() => revealMutation.mutate()}
-                          disabled={revealMutation.isPending || trade.vaultRevealed}
-                          className="w-full rounded-md bg-blue-600 py-2 font-bold text-white hover:bg-blue-700 disabled:bg-blue-300"
-                        >
-                          {trade.vaultRevealed ? 'Already Revealed' : (revealMutation.isPending ? 'Revealing...' : 'Reveal Credentials')}
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Buyer confirms receipt — releases escrow to the seller and queues their
-                        payout. Irreversible, so the copy says so plainly. */}
-                    <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
-                      <p className="text-sm text-gray-600">
-                        Confirmed you received what you paid for? Confirming releases the escrowed
-                        funds to the seller. This cannot be undone.
-                      </p>
-                      <button
-                        onClick={() => confirmMutation.mutate()}
-                        disabled={confirmMutation.isPending}
-                        className="mt-3 w-full rounded-md bg-emerald-600 py-2 font-bold text-white hover:bg-emerald-700 disabled:bg-emerald-300"
-                      >
-                        {confirmMutation.isPending ? 'Confirming...' : 'Confirm Receipt & Release Funds'}
-                      </button>
-                      {confirmMutation.error && (
-                        <p className="mt-2 text-sm text-red-500">
-                          {(confirmMutation.error as any).response?.data?.message || 'Failed to confirm the trade'}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {decrypted && (
-                  <div className="rounded-md bg-amber-50 p-4 border border-amber-200">
-                    <p className="mb-2 text-xs font-bold text-amber-800 uppercase tracking-wider">Credentials (Auto-wipe in {timer}s)</p>
-                    <div className="rounded bg-white p-3 font-mono text-sm break-all border border-amber-100 select-all">
-                      {decrypted}
-                    </div>
-                  </div>
-                )}
-
-                {revealMutation.error && (
-                  <p className="text-center text-sm text-red-500 mt-2">
-                    {(revealMutation.error as any).response?.data?.message || 'Failed to reveal credentials'}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {/* Seller View */}
-            {isSeller && (
-              <div className="space-y-4">
-                {trade.status === 'payment_window' && (
-                  <p className="text-center py-4 text-gray-500 italic">Waiting for buyer to complete payment...</p>
-                )}
-
-                {trade.status === 'paid' && (
-                  <div>
-                    <p className="mb-2 text-sm text-gray-600">Enter account credentials for the buyer:</p>
-                    <textarea 
-                      value={credentialsInput}
-                      onChange={(e) => setCredentialsInput(e.target.value)}
-                      placeholder="Username: password"
-                      className="w-full rounded-md border p-3 text-sm focus:ring-2 focus:ring-blue-500"
-                      rows={3}
-                    />
-                    <button 
-                      onClick={() => submitVaultMutation.mutate()}
-                      disabled={!credentialsInput || submitVaultMutation.isPending}
-                      className="mt-2 w-full rounded-md bg-blue-600 py-2 font-bold text-white hover:bg-blue-700 disabled:bg-gray-300"
-                    >
-                      {submitVaultMutation.isPending ? 'Submitting...' : 'Submit to Vault'}
-                    </button>
-                    
-                    <button 
-                      onClick={() => releaseMutation.mutate()}
-                      disabled={releaseMutation.isPending}
-                      className="mt-4 w-full rounded-md border-2 border-blue-600 py-2 font-bold text-blue-600 hover:bg-blue-50 disabled:border-blue-300 disabled:text-blue-300"
-                    >
-                      {releaseMutation.isPending ? 'Releasing...' : 'Release to Buyer'}
-                    </button>
-                  </div>
-                )}
-                
-                {trade.status === 'credentials_released' && (
-                  <p className="text-center py-4 text-green-600 font-medium">Credentials released to buyer.</p>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Sidebar Info */}
-        <div className="space-y-6">
-          <div className="rounded-lg border bg-white p-6 shadow-sm">
-            <h2 className="mb-4 text-sm font-bold text-gray-400 uppercase tracking-widest">Parties</h2>
-            <div className="space-y-4">
-              <div>
-                <p className="text-xs text-gray-500 uppercase">Buyer</p>
-                <p className="text-sm font-semibold text-slate-700">{trade.buyer?.name} {trade.buyer?._id === user._id && '(You)'}</p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-500 uppercase">Seller</p>
-                <p className="text-sm font-semibold text-slate-700">{trade.seller?.name} {trade.seller?._id === user._id && '(You)'}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <AppShell width="wide">
+      <TradeRoom
+        trade={tradeWithPayout}
+        currentUserId={me?._id}
+        currentUserPhone={me?.phone}
+        socketState={socketState}
+      />
+    </AppShell>
   );
 }

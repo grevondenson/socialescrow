@@ -87,7 +87,7 @@ Platform triggers M-Pesa B2C → seller phone
 
 | Layer | Technology |
 |---|---|
-| Frontend | Next.js 14, React 18, Tailwind CSS |
+| Frontend | Next.js 14, React 18, Tailwind CSS v3 (own token set — no shadcn, no UI kit), Lucide icons |
 | Backend | Node.js, Express.js |
 | Database | MongoDB + Mongoose |
 | Authentication | JWT (HTTP-only cookie), bcrypt |
@@ -108,33 +108,49 @@ Platform triggers M-Pesa B2C → seller phone
 socialescrow/
 ├── client/                         # Next.js 14 frontend
 │   ├── app/
+│   │   ├── page.tsx                # Marketplace feed (infinite scroll)
 │   │   ├── (auth)/
 │   │   │   ├── login/              # Login page
 │   │   │   └── register/           # Register page
-│   │   ├── (marketplace)/          # Browse listings
-│   │   │   └── listing/[id]/       # Listing detail
-│   │   ├── (trade)/
-│   │   │   └── [id]/               # Trade room (real-time)
+│   │   ├── listing/
+│   │   │   ├── [id]/               # Listing detail (server component)
+│   │   │   └── create/             # Create listing + screenshot upload
+│   │   ├── trade/
+│   │   │   ├── new/                # Trade confirmation / payment hand-off
+│   │   │   └── [id]/               # Trade room (rail, chat, dispute, payout)
 │   │   ├── (dashboard)/
-│   │   │   ├── seller/             # Seller dashboard
-│   │   │   └── buyer/              # Buyer dashboard
-│   │   └── (admin)/
-│   │       ├── overview/           # Platform analytics
-│   │       ├── trades/             # All trades
-│   │       ├── disputes/           # Dispute queue
-│   │       ├── fraud/              # Flagged users
-│   │       └── users/              # User management
+│   │   │   ├── seller/             # Seller dashboard + payout history
+│   │   │   ├── buyer/              # Buyer dashboard
+│   │   │   └── wallet/             # Ledger history
+│   │   └── admin/
+│   │       ├── page.tsx            # Overview: queues, circuit breaker
+│   │       ├── payouts/            # Payout approval queue
+│   │       ├── disputes/           # Dispute queue + resolution
+│   │       ├── fraud/              # Fraud flags
+│   │       ├── payments/           # Manual payment verification
+│   │       ├── kyc/                # KYC review queue
+│   │       ├── listings/           # Listing moderation
+│   │       ├── trades/             # All trades (read-only)
+│   │       ├── users/              # User directory, ban/unban
+│   │       └── audit-log/          # Audit trail
 │   ├── components/
-│   │   ├── ui/                     # Base components (Button, Input, Card)
-│   │   ├── auth/                   # Auth forms
-│   │   ├── marketplace/            # Listing cards, filters
-│   │   ├── trade/                  # Trade room UI, chat
-│   │   └── admin/                  # Dashboard panels
+│   │   ├── ui/                     # Button, Card, Field, Badge, Table, Dialog, Toast, States, Pagination
+│   │   ├── layout/                 # AppShell, SiteHeader
+│   │   ├── auth/                   # Auth form
+│   │   ├── marketplace/            # Feed, listing card, filters
+│   │   ├── trade/                  # TradeRoom, StatusRail, Payment/Credentials/Chat/Dispute/Payout panels
+│   │   └── dashboard/              # WalletCard
 │   ├── lib/
-│   │   ├── api.ts                  # Axios instance
-│   │   └── utils.ts                # formatKES, cn, formatNumber
-│   ├── hooks/                      # Custom React hooks
-│   ├── middleware.ts                # Next.js route protection
+│   │   ├── api.ts                  # Axios instance + refresh interceptor
+│   │   ├── status.ts               # Domain status vocabulary (tone + label)
+│   │   ├── socket.ts               # Socket.io client (token re-read on reconnect)
+│   │   ├── utils.ts                # formatKES, formatDate(Time), formatCountdown, cn
+│   │   └── services/               # Trade, wallet, listings, admin, adminOps, risk
+│   ├── hooks/
+│   │   ├── useAuth.ts
+│   │   └── useTradeSocket.ts       # Joins the room, invalidates queries on events
+│   ├── middleware.ts               # Route gating on the refresh cookie
+│   ├── tailwind.config.ts          # "Vault Ledger" tokens
 │   └── types/                      # TypeScript types
 │
 ├── server/                         # Express backend
@@ -293,12 +309,14 @@ client code calls `api.get('/admin/payouts')`, not `/api/admin/payouts`.
 | GET | `/api/trades/:id/vault/reveal` | Buyer | One-time credential reveal (410 Gone after first read) |
 | PATCH | `/api/trades/:id/release` | Seller | Release credentials to the buyer |
 | PATCH | `/api/trades/:id/confirm` | Buyer | Confirm account received → triggers payout |
+| GET | `/api/trades/:id/payout` | Seller | Seller's payout state for this trade (`PayoutQueue` row, `.lean()`; 403 for the buyer) |
 | GET | `/api/trades/:id/messages` | Participant | Trade-room chat history |
 | POST | `/api/trades/:id/messages` | Participant | Send a chat message (also pushed over Socket.io) |
 | POST | `/api/trades/:id/dispute` | Buyer/Seller | Raise a dispute (freezes escrow) |
 
-> There is no `PATCH /api/trades/:id/cancel`. Trades are cancelled by the payment-window job, not by
-> a client call.
+> There is no `PATCH /api/trades/:id/cancel`. Payment-window expiry / auto-cancel is **not
+> implemented** (`paymentWindow.job.js` is an unimported stub), so a trade that is never paid stays
+> in `payment_window` until an admin or a future sweep acts on it.
 
 ### Wallet
 | Method | Endpoint | Auth | Description |
@@ -325,8 +343,12 @@ client code calls `api.get('/admin/payouts')`, not `/api/admin/payouts`.
 | GET | `/api/admin/platform` | Admin | Platform account + fees |
 | PATCH | `/api/admin/platform/circuit-breaker` | Admin | Toggle the payout circuit breaker |
 | GET | `/api/admin/users/kyc-review` | Admin | Pending KYC queue |
+| GET | `/api/admin/stats` | Admin | Queue counts for the overview tiles (`{ data }`) |
+| GET | `/api/admin/users?role=&banned=&q=&page=&per_page=` | Admin | User directory. Returns `{ data, meta }` |
+| PATCH | `/api/admin/users/:id/ban` | Admin | Ban a user (`{ banReason }`) |
+| PATCH | `/api/admin/users/:id/unban` | Admin | Restore a banned user (`{ reason }`) |
 | PATCH | `/api/admin/users/:id/kyc-review` | Admin | Approve/reject a KYC submission |
-| PATCH | `/api/admin/users/:id/ban` | Admin | Ban a user |
+| GET | `/api/admin/trades?status=&page=&per_page=` | Admin | All trades, read-only. Returns `{ data, meta }` |
 | GET | `/api/admin/listings` | Admin | All listings incl. pending review |
 | PATCH | `/api/admin/listings/:id/moderation` | Admin | Approve/reject a listing |
 | PATCH | `/api/admin/listings/:id/remove` | Admin | Force-remove a listing |
@@ -370,7 +392,7 @@ client code calls `api.get('/admin/payouts')`, not `/api/admin/payouts`.
 
 | Zone | Auth required | What's accessible |
 |---|---|---|
-| **Public** | ❌ No | Browse marketplace, view listing detail, seller profile, ratings, reviews, price |
+| **Public** | ❌ No | Browse marketplace, view listing detail, seller profile, price |
 | **Authenticated** | ✅ Yes | Deposit funds, initiate trade, trade room, dashboard |
 | **Admin** | ✅ Admin role | All trades, disputes, fraud flags, user management |
 
@@ -384,14 +406,16 @@ client code calls `api.get('/admin/payouts')`, not `/api/admin/payouts`.
 Every listing detail page shows:
 
 ```
-Account Info      platform, followers, niche, engagement rate, account age
-Media Proof       up to 5 screenshots uploaded by seller
-Seller Profile    name, member since date, verified badge
-Seller Stats      ⭐ rating · total trades · completion rate · avg release time
-Recent Reviews    last 5 reviews from previous buyers (verified trade badge)
-Price             KES formatted — with fee breakdown shown to buyer
+Account Info      platform, followers, niche, engagement rate
+Media Proof       seller-uploaded screenshots (if any)
+Seller Profile    name, tier badge
+Price             KES formatted
 CTA               "I'm Interested — Deposit & Start Trade" (auth-gated)
 ```
+
+> **Not implemented:** seller ratings, reviews, verified-trade badges, member-since, completion rate
+> and average release time. There is no Review model, route or UI; the reputation/reviews feature has
+> never been built.
 
 ---
 
@@ -399,7 +423,7 @@ CTA               "I'm Interested — Deposit & Start Trade" (auth-gated)
 
 ```
 STEP 1  Buyer browses marketplace (no login needed)
-        Views listing: account stats, screenshots, seller rating, reviews, price
+        Views listing: account stats, screenshots, seller tier, price
 
 STEP 2  Buyer decides they're interested
         Clicks "I'm Interested" → prompted to login/register if not authenticated
@@ -464,25 +488,26 @@ retired.)
 | 1 | Auth + KYC (JWT, bcrypt, email verify, RBAC) | ✅ Done | ✅ Done |
 | 2 | Listings + Marketplace (CRUD, Cloudinary, search, pagination) | ✅ Done | ✅ Done |
 | 3 | Trade Initiation + Credential Vault (envelope encryption, one-time reveal) | ✅ Done | ✅ Done |
-| 4 | Wallet + Ledger (MongoDB transactions, atomic ops, reconciliation) | ✅ Done | Partial |
-| 5 | M-Pesa STK Push + C2B Webhook (+ webhook hardening) | ✅ Done | ⏳ Deferred |
+| 4 | Wallet + Ledger (MongoDB transactions, atomic ops, reconciliation) | ✅ Done | ✅ Done |
+| 5 | M-Pesa STK Push + C2B Webhook (+ webhook hardening) | ✅ Done | ✅ Done |
 | 5.5 | AI Assistant (`POST /api/ai`, Messages API) | ✅ Done | ⏳ Deferred |
-| 6 | Dispute Resolution + Real-time Chat (Socket.io, admin resolution) | ✅ Done | ⏳ Deferred |
-| 7 | M-Pesa B2C Payouts + Automated Release (PayoutQueue, admin approval) | ✅ Done | ⏳ Deferred |
+| 6 | Dispute Resolution + Real-time Chat (Socket.io, admin resolution) | ✅ Done | ✅ Done |
+| 7 | M-Pesa B2C Payouts + Automated Release (PayoutQueue, admin approval) | ✅ Done | ✅ Done |
 | 8 | Advanced Fraud Engine (velocity/IP checks, auto-freeze) | ⏳ Upcoming | ⏳ Upcoming |
-| 9 | Full Admin Dashboard UI (all admin panels) | — | 🔨 In progress |
+| 9 | Full Admin Dashboard UI (all admin panels) | — | ✅ Done |
 
-**Current state:** Phases 1–7 backend is done and tested (135 Jest tests green). What remains is
-frontend work that is deferred, not forgotten:
+**Current state:** Phases 1–7 are complete end to end — backend and UI. The three UI items that had
+been deferred since 12 Aug 2026 (Phase 5 payment wiring, Phase 6 chat + dispute, Phase 7 seller payout
+state) are built, and the Phase 9 admin console is finished: overview with the circuit-breaker control,
+trades, users, and system health, alongside the eight panels that already existed.
 
-- **Phase 5 UI** — STK Push / manual-payment fallback UI and admin manual-payment verification.
-- **Phase 6 UI** — trade-room chat panel, "Raise Dispute" flow, admin disputes page.
-- **Phase 7 UI** — admin payout queue, seller "payout sent" state in the trade room.
+Verification at this commit: `next build` emits 22/22 routes with zero type errors; the server suite is
+**140 tests green** across 8 suites. What tests cannot prove is the money path against live Daraja —
+that needs sandbox credentials and a public callback URL, and has still never been run.
 
-Those three are blocked on client access-token handling (store the access token at login, attach it
-as a Bearer header, and feed it to the Socket.io handshake). Admin disputes, fraud, KYC, listings and
-payments pages exist and are being wired as part of Phase 9. Phase 8 (fraud engine) and the remaining
-Phase 9 panels are not built.
+Remaining work is Phase 8 (the fraud engine) and the deferred major dependency upgrades below. The
+seven older admin panels render correctly but still use raw utility classes rather than the shared
+`Table`/`Dialog`/`toast` primitives — a styling pass, not a functional gap.
 
 ### Known Deferred Upgrades
 
@@ -500,9 +525,11 @@ deliberately deferred, not overlooked.
 
 Audit totals at the time of writing:
 
-- **Client — 6 vulnerabilities (5 high, 1 critical).** Everything traces back to `next` core
-  (`postcss`, and the `eslint-config-next` → `@next/eslint-plugin-next` → `glob` → `brace-expansion`
-  chain). Clearing them requires `next@16`.
+- **Client — 13 vulnerabilities (2 moderate, 10 high, 1 critical).** Up from 6 after adding the UI
+  toolchain. The critical and most of the high advisories trace back to `next` core; the rest are in
+  the `postcss`/`tailwindcss` build chain and `eslint-config-next` → `@next/eslint-plugin-next` →
+  `glob` → `brace-expansion`. None ship to the browser bundle except what `next` itself carries.
+  Clearing them requires `next@16` plus a Tailwind major. Re-measured at this commit.
 - **Server — 38 (31 high, 7 moderate, 0 critical).** Mostly dev/test tooling (`jest@29`, `nodemon`,
   `braces`), plus `nodemailer@6`, the `uuid@9`/`bullmq@3` pair, and transitive `socket.io`/`express`
   deps. None are shipped to the browser.

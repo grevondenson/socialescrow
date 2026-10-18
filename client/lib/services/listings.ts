@@ -27,3 +27,9 @@ export const createListing = async (formData: FormData) => {
   });
   return data;
 };
+
+/**
+ * Alias kept separate so the create-listing page reads intent-first.
+ * The server accepts multipart at the same route; there is no separate upload endpoint.
+ */
+export const uploadProofScreenshots = createListing;

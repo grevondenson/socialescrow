@@ -7,6 +7,10 @@ const auditLogSchema = new mongoose.Schema({
       'register', 'login', 'login_failure', 'logout',
       'listing_create', 'listing_remove', 'trade_create',
       'kyc_submit', 'kyc_verified', 'kyc_mismatch',
+      // Admin moderation actions (admin.controller). They were written with names absent from
+      // this enum ('kyc_review', 'listing_moderation') and the ban reused 'register', so every
+      // one of these audit writes was rejected and silently lost the record.
+      'kyc_review', 'listing_moderation', 'user_ban', 'user_unban',
       'email_verify_request', 'email_verified',
       'VAULT_SUBMIT', 'VAULT_REVEAL', 'VAULT_REVEAL_ATTEMPT_FAILED',
       'dispute_raised', 'dispute_resolved',
@@ -23,7 +27,11 @@ const auditLogSchema = new mongoose.Schema({
     ],
     required: true,
   },
-  user: {
+  // The schema path must be `userId`: that is the field name every writer uses (auth.controller,
+  // listings.controller, admin.controller, audit.service) and the name passed to
+  // .populate() in admin.controller.getAuditLogs — which throws StrictPopulateError (500) if it
+  // does not match. Renamed from `user`, which no writer wrote to.
+  userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
   },

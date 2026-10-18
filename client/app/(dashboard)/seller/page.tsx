@@ -1,27 +1,38 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
+import { Plus } from 'lucide-react';
+import { AppShell } from '../../../components/layout/AppShell';
 import WalletCard from '../../../components/dashboard/WalletCard';
+import { Card, CardHeader, Stat } from '../../../components/ui/Card';
+import { Badge } from '../../../components/ui/Badge';
+import { Button } from '../../../components/ui/Button';
+import { Table, THead, TBody, TR, TH, TD } from '../../../components/ui/Table';
+import { EmptyState, ErrorState, Skeleton } from '../../../components/ui/States';
 import {
   fetchWallet,
   fetchLedger,
   type LedgerEntry,
   type LedgerEntryType,
 } from '../../../lib/services/wallet';
-import { formatKES } from '../../../lib/utils';
+import { formatKES, formatDateTime } from '../../../lib/utils';
 
-// ── Payout history ─────────────────────────────────────────────────────────────
-//
-// There is no seller-scoped payout endpoint. PayoutQueue is admin-only, so the
-// seller's view of "what happened to my money" is reconstructed from the same two
-// reads the wallet screens already use:
-//   GET /wallet        -> pendingPayout / availableBalance / lockedInEscrow
-//   GET /wallet/ledger -> SELLER_PAYOUT rows (money credited to pendingPayout on
-//                         escrow release) and PLATFORM_FEE rows (the fee deducted,
-//                         written with the seller as `user` by convention).
-// The ledger's `type` filter is server-side and single-valued, so the two types are
-// fetched in parallel and merged here rather than in two sequential round-trips.
+/**
+ * Seller dashboard.
+ *
+ * There is no seller-scoped payout endpoint for a *list*, so "what happened to my money"
+ * is reconstructed from the two reads the wallet screens already use:
+ *   GET /wallet        -> pendingPayout / availableBalance / lockedInEscrow
+ *   GET /wallet/ledger -> SELLER_PAYOUT rows (credited on escrow release) and
+ *                         PLATFORM_FEE rows (deducted, written with the seller as `user`)
+ * The ledger's `type` filter is single-valued server-side, so both are fetched in parallel
+ * and merged here.
+ *
+ * Per-trade live payout state (pending approval → sent) lives in the trade room, where it
+ * is scoped to the seller by GET /trades/:id/payout.
+ */
 
 const PAYOUT_TYPES: { type: LedgerEntryType; label: string; tone: 'credit' | 'fee' }[] = [
   { type: 'SELLER_PAYOUT', label: 'Payout received', tone: 'credit' },
@@ -30,67 +41,18 @@ const PAYOUT_TYPES: { type: LedgerEntryType; label: string; tone: 'credit' | 'fe
 
 const HISTORY_LIMIT = 20;
 
-const formatDate = (iso: string): string =>
-  new Intl.DateTimeFormat('en-KE', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(iso));
-
-const sortNewestFirst = (a: LedgerEntry, b: LedgerEntry): number =>
-  new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-
 interface PayoutRow extends LedgerEntry {
   tone: 'credit' | 'fee';
   label: string;
 }
 
-function StatusTile({
-  label,
-  value,
-  hint,
-  accent,
-}: {
-  label: string;
-  value: string;
-  hint: string;
-  accent: string;
-}) {
-  return (
-    <div
-      style={{
-        border: '1px solid #e2e8f0',
-        borderRadius: 16,
-        background: '#fff',
-        padding: 20,
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span
-          style={{
-            width: 8,
-            height: 8,
-            borderRadius: 999,
-            background: accent,
-            display: 'inline-block',
-          }}
-        />
-        <p style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#64748b' }}>
-          {label}
-        </p>
-      </div>
-      <p style={{ marginTop: 8, fontSize: '1.25rem', fontWeight: 700, color: '#0f172a' }}>{value}</p>
-      <p style={{ marginTop: 4, fontSize: '0.8125rem', color: '#64748b' }}>{hint}</p>
-    </div>
-  );
-}
+const sortNewestFirst = (a: LedgerEntry, b: LedgerEntry) =>
+  new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
 
 export default function SellerDashboardPage() {
   const [showAll, setShowAll] = useState(false);
 
-  // Shares the ['wallet'] cache key with <WalletCard/>, so this does not double-fetch.
+  // Shares the ['wallet'] key with <WalletCard/>, so this does not double-fetch.
   const walletQuery = useQuery({
     queryKey: ['wallet'],
     queryFn: fetchWallet,
@@ -108,10 +70,10 @@ export default function SellerDashboardPage() {
       return { payouts, fees };
     },
     initialPageParam: 1,
-    getNextPageParam: (lastPage) => {
-      const more = lastPage.payouts.pagination.hasMore || lastPage.fees.pagination.hasMore;
-      return more ? lastPage.payouts.pagination.page + 1 : undefined;
-    },
+    getNextPageParam: (lastPage) =>
+      lastPage.payouts.pagination.hasMore || lastPage.fees.pagination.hasMore
+        ? lastPage.payouts.pagination.page + 1
+        : undefined,
     refetchOnWindowFocus: false,
   });
 
@@ -149,207 +111,156 @@ export default function SellerDashboardPage() {
   const visibleRows = showAll ? rows : rows.slice(0, 6);
 
   return (
-    <main style={{ maxWidth: 900, margin: '0 auto', padding: '32px 24px' }}>
-      <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#0f172a', marginBottom: 24 }}>
-        Seller Dashboard
-      </h1>
-
-      <div style={{ display: 'grid', gap: 24, gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
-        <WalletCard />
-      </div>
-
-      {/* ── Payout status ─────────────────────────────────────────────── */}
-      <section style={{ marginTop: 32 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
-          <h2 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#0f172a' }}>Payout status</h2>
-          {payoutQuery.isFetching && (
-            <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Refreshing…</span>
-          )}
-        </div>
-
-        {walletQuery.isError && (
-          <p style={{ marginTop: 12, fontSize: '0.875rem', color: '#b91c1c' }}>
-            {(walletQuery.error as { response?: { data?: { message?: string } } })?.response?.data?.message
-              || 'Failed to load payout balances.'}
+    <AppShell width="default">
+      <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="font-display text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
+            Selling
+          </h1>
+          <p className="mt-1 text-sm text-neutral-600">
+            Your balance, what escrow is holding, and what M-Pesa has paid out.
           </p>
-        )}
-
-        <div
-          style={{
-            marginTop: 16,
-            display: 'grid',
-            gap: 16,
-            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-          }}
-        >
-          <StatusTile
-            label="Pending payout"
-            value={wallet ? formatKES(wallet.pendingPayout) : '—'}
-            hint="Released to you, awaiting M-Pesa disbursement"
-            accent="#f59e0b"
-          />
-          <StatusTile
-            label="Available"
-            value={wallet ? formatKES(wallet.availableBalance) : '—'}
-            hint="Cleared funds in your wallet"
-            accent="#10b981"
-          />
-          <StatusTile
-            label="In escrow"
-            value={wallet ? formatKES(wallet.lockedInEscrow) : '—'}
-            hint="Held against active trades"
-            accent="#6366f1"
-          />
         </div>
-      </section>
+        <Link href="/listing/create">
+          <Button>
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            List an account
+          </Button>
+        </Link>
+      </header>
 
-      {/* ── Payout history ────────────────────────────────────────────── */}
-      <section style={{ marginTop: 32 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
-          <h2 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#0f172a' }}>Payout history</h2>
-          <span style={{ fontSize: '0.8125rem', color: '#64748b' }}>
-            {counts.payouts} payout{counts.payouts === 1 ? '' : 's'} · {counts.fees} fee{counts.fees === 1 ? '' : 's'}
-          </span>
+      <div className="grid gap-5 lg:grid-cols-3">
+        <div className="lg:col-span-1">
+          <WalletCard />
         </div>
 
-        <div
-          style={{
-            marginTop: 16,
-            border: '1px solid #e2e8f0',
-            borderRadius: 16,
-            background: '#fff',
-            overflow: 'hidden',
-          }}
-        >
-          {payoutQuery.isLoading && (
-            <div style={{ padding: 24 }}>
-              {[1, 2, 3].map((i) => (
-                <div
-                  key={i}
-                  style={{
-                    height: 16,
-                    borderRadius: 6,
-                    background: '#f1f5f9',
-                    marginBottom: 12,
-                    width: `${90 - i * 12}%`,
-                  }}
+        <div className="space-y-4 lg:col-span-2">
+          <section>
+            <h2 className="mb-2.5 font-display text-sm font-semibold text-ink">Payout status</h2>
+
+            {walletQuery.isError ? (
+              <ErrorState
+                title="Balances did not load"
+                onRetry={() => void walletQuery.refetch()}
+              />
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-3">
+                <Stat
+                  label="Pending payout"
+                  value={wallet ? formatKES(wallet.pendingPayout) : '—'}
+                  hint="Owed to you; awaiting M-Pesa"
+                  tone="ochre"
                 />
-              ))}
+                <Stat
+                  label="Available"
+                  value={wallet ? formatKES(wallet.availableBalance) : '—'}
+                  hint="Cleared funds you can use"
+                  tone="forest"
+                />
+                <Stat
+                  label="In escrow"
+                  value={wallet ? formatKES(wallet.lockedInEscrow) : '—'}
+                  hint="Held against active trades"
+                  tone="neutral"
+                />
+              </div>
+            )}
+          </section>
+
+          <Card className="mt-5" flush>
+            <div className="px-5 pt-5 sm:px-6">
+              <CardHeader
+                title="Payout history"
+                description={`${counts.payouts} payout${counts.payouts === 1 ? '' : 's'} · ${counts.fees} fee${counts.fees === 1 ? '' : 's'}`}
+              />
             </div>
-          )}
 
-          {payoutQuery.isError && (
-            <p style={{ padding: 24, fontSize: '0.875rem', color: '#b91c1c' }}>
-              Failed to load payout history.
-            </p>
-          )}
-
-          {!payoutQuery.isLoading && !payoutQuery.isError && rows.length === 0 && (
-            <p style={{ padding: 24, fontSize: '0.875rem', color: '#64748b' }}>
-              No payouts yet. Once a trade is completed and escrow releases, the payout appears here.
-            </p>
-          )}
-
-          {!payoutQuery.isLoading && !payoutQuery.isError && visibleRows.length > 0 && (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-              <thead>
-                <tr style={{ background: '#f8fafc', textAlign: 'left' }}>
-                  <th style={{ padding: '10px 16px', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: '#64748b', fontWeight: 600 }}>Date</th>
-                  <th style={{ padding: '10px 16px', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: '#64748b', fontWeight: 600 }}>Type</th>
-                  <th style={{ padding: '10px 16px', fontSize: '0.6875rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: '#64748b', fontWeight: 600, textAlign: 'right' }}>Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleRows.map((row) => (
-                  <tr key={row._id} style={{ borderTop: '1px solid #f1f5f9' }}>
-                    <td style={{ padding: '12px 16px', color: '#475569', whiteSpace: 'nowrap' }}>
-                      {formatDate(row.createdAt)}
-                    </td>
-                    <td style={{ padding: '12px 16px' }}>
-                      <span
-                        style={{
-                          display: 'inline-block',
-                          borderRadius: 999,
-                          border: `1px solid ${row.tone === 'credit' ? '#a7f3d0' : '#e2e8f0'}`,
-                          background: row.tone === 'credit' ? '#ecfdf5' : '#f8fafc',
-                          color: row.tone === 'credit' ? '#047857' : '#475569',
-                          padding: '2px 8px',
-                          fontSize: '0.75rem',
-                          fontWeight: 600,
-                        }}
-                      >
-                        {row.label}
-                      </span>
-                      {row.note && (
-                        <p style={{ marginTop: 4, fontSize: '0.75rem', color: '#94a3b8' }}>{row.note}</p>
-                      )}
-                    </td>
-                    <td
-                      style={{
-                        padding: '12px 16px',
-                        textAlign: 'right',
-                        whiteSpace: 'nowrap',
-                        fontWeight: 600,
-                        color: row.tone === 'credit' ? '#047857' : '#b91c1c',
-                      }}
-                    >
-                      {row.tone === 'credit' ? '+' : '−'}
-                      {formatKES(row.amountKes)}
-                    </td>
-                  </tr>
+            {payoutQuery.isLoading ? (
+              <div className="space-y-2 px-5 pb-5 sm:px-6">
+                {[1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-10 w-full" />
                 ))}
-              </tbody>
-            </table>
-          )}
+              </div>
+            ) : payoutQuery.isError ? (
+              <div className="px-5 pb-5 sm:px-6">
+                <ErrorState
+                  title="Payout history did not load"
+                  onRetry={() => void payoutQuery.refetch()}
+                />
+              </div>
+            ) : rows.length === 0 ? (
+              <div className="px-5 pb-5 sm:px-6">
+                <EmptyState
+                  compact
+                  title="No payouts yet"
+                  description="When a buyer confirms receipt on a trade, your payout appears here."
+                />
+              </div>
+            ) : (
+              <Table>
+                <THead>
+                  <TR>
+                    <TH>Date</TH>
+                    <TH>Type</TH>
+                    <TH numeric>Amount</TH>
+                  </TR>
+                </THead>
+                <TBody>
+                  {visibleRows.map((row) => (
+                    <TR key={row._id}>
+                      <TD>
+                        <span className="tnum text-xs text-neutral-500">
+                          {formatDateTime(row.createdAt)}
+                        </span>
+                      </TD>
+                      <TD>
+                        <Badge tone={row.tone === 'credit' ? 'success' : 'neutral'}>
+                          {row.label}
+                        </Badge>
+                        {row.note && (
+                          <p className="mt-0.5 max-w-[16rem] truncate text-2xs text-neutral-400" title={row.note}>
+                            {row.note}
+                          </p>
+                        )}
+                      </TD>
+                      <TD numeric>
+                        <span className={row.tone === 'credit' ? 'text-forest-700' : 'text-clay-600'}>
+                          {row.tone === 'credit' ? '+' : '−'}
+                          {formatKES(row.amountKes)}
+                        </span>
+                      </TD>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+            )}
 
-          {rows.length > 6 && (
-            <div style={{ borderTop: '1px solid #f1f5f9', padding: '10px 16px', textAlign: 'center' }}>
-              <button
-                type="button"
-                onClick={() => setShowAll((v) => !v)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#2563eb',
-                  fontSize: '0.8125rem',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  padding: 4,
-                }}
-              >
-                {showAll ? 'Show less' : `Show all ${rows.length}`}
-              </button>
+            <div className="flex flex-wrap items-center justify-center gap-3 px-5 py-4 sm:px-6">
+              {rows.length > 6 && (
+                <Button variant="ghost" size="sm" onClick={() => setShowAll((v) => !v)}>
+                  {showAll ? 'Show fewer' : `Show all ${rows.length}`}
+                </Button>
+              )}
+              {payoutQuery.hasNextPage && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void payoutQuery.fetchNextPage()}
+                  isPending={payoutQuery.isFetchingNextPage}
+                >
+                  Load older payouts
+                </Button>
+              )}
             </div>
-          )}
+          </Card>
+
+          <p className="mt-3 text-xs leading-4 text-neutral-500">
+            Payouts go to the M-Pesa number on your KYC. Each one is approved by an admin
+            before it is sent — that review is what protects you from a hijacked account
+            taking the money with it.
+          </p>
         </div>
-
-        {payoutQuery.hasNextPage && (
-          <div style={{ marginTop: 12, textAlign: 'center' }}>
-            <button
-              type="button"
-              onClick={() => payoutQuery.fetchNextPage()}
-              disabled={payoutQuery.isFetchingNextPage}
-              style={{
-                border: '1px solid #e2e8f0',
-                borderRadius: 12,
-                background: '#fff',
-                padding: '8px 16px',
-                fontSize: '0.875rem',
-                fontWeight: 600,
-                color: '#334155',
-                cursor: payoutQuery.isFetchingNextPage ? 'not-allowed' : 'pointer',
-                opacity: payoutQuery.isFetchingNextPage ? 0.5 : 1,
-              }}
-            >
-              {payoutQuery.isFetchingNextPage ? 'Loading…' : 'Load older payouts'}
-            </button>
-          </div>
-        )}
-
-        <p style={{ marginTop: 12, fontSize: '0.75rem', color: '#94a3b8' }}>
-          Payouts are sent to your registered M-Pesa number. Pending payouts are queued for admin approval.
-        </p>
-      </section>
-    </main>
+      </div>
+    </AppShell>
   );
 }

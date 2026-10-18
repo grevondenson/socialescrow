@@ -4,8 +4,10 @@ const PlatformAccount = require('../models/PlatformAccount.model');
 const PayoutQueue = require('../models/PayoutQueue.model');
 
 const Listing = require('../models/Listing.model');
+const Trade = require('../models/Trade.model');
 const Dispute = require('../models/Dispute.model');
 const Message = require('../models/Message.model');
+const FraudFlag = require('../models/FraudFlag.model');
 const escrowService = require('../services/escrow.service');
 const { emitToTrade } = require('../sockets/trade.socket');
 const { enqueuePayout } = require('../jobs/payout.job');
@@ -63,7 +65,7 @@ const banUser = async (req, res) => {
     }
 
     await AuditLog.create({
-      action: 'register',
+      action: 'user_ban',
       userId: req.user.id,
       metadata: { bannedUserId: id, banReason },
     });
@@ -337,7 +339,7 @@ const resolveDispute = async (req, res, next) => {
     await AuditLog.create(
       [{
         action: 'dispute_resolved',
-        user: req.user.id,
+        userId: req.user.id,
         metadata: { tradeId, disputeId: dispute._id, resolution, buyerAmount, sellerAmount },
       }],
       { session }
@@ -486,7 +488,7 @@ const approvePayout = async (req, res, next) => {
       await AuditLog.create(
         [{
           action: 'payout_approved',
-          user: req.user.id,
+          userId: req.user.id,
           metadata: {
             tradeId:   payout.trade.toString(),
             payoutId:  payout._id.toString(),
@@ -554,7 +556,7 @@ const rejectPayout = async (req, res, next) => {
       await AuditLog.create(
         [{
           action: 'payout_rejected',
-          user: req.user.id,
+          userId: req.user.id,
           metadata: {
             tradeId:   payout.trade.toString(),
             payoutId:  payout._id.toString(),
@@ -617,7 +619,7 @@ const requeuePayout = async (req, res, next) => {
       await AuditLog.create(
         [{
           action: 'payout_requeued',
-          user: req.user.id,
+          userId: req.user.id,
           metadata: {
             tradeId:   payout.trade.toString(),
             payoutId:  payout._id.toString(),
@@ -638,6 +640,170 @@ const requeuePayout = async (req, res, next) => {
   }
 };
 
+/**
+ * Un-ban a user. The inverse of banUser — the enum, the audit trail and the reason
+ * field all mirror it.
+ *
+ * @route PATCH /api/admin/users/:id/unban
+ * @access Private/Admin
+ */
+const unbanUser = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    const user = await User.findByIdAndUpdate(
+      id,
+      { isBanned: false, banReason: null },
+      { new: true }
+    ).select('-password');
+
+    if (!user) {
+      throw _httpError(404, 'User not found', 'USER_NOT_FOUND');
+    }
+
+    await AuditLog.create({
+      action: 'user_unban',
+      userId: req.user.id,
+      metadata: { unbannedUserId: id, reason: reason || null },
+    });
+
+    res.json({ data: user });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    List users for the admin console. Optional `?role=`, `?banned=`, `?q=` (name/email).
+ * @route   GET /api/admin/users?role=seller&banned=false&q=wanjiru&page=1&per_page=50
+ * @access  Private/Admin
+ */
+const getUsers = async (req, res, next) => {
+  try {
+    const { role, banned, q } = req.query;
+
+    if (role && !['buyer', 'seller', 'admin'].includes(role)) {
+      throw _httpError(400, "role must be one of: buyer, seller, admin", 'INVALID_ROLE');
+    }
+
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const perPage = Math.min(Math.max(parseInt(req.query.per_page, 10) || 50, 1), 100);
+
+    const filter = {};
+    if (role) filter.role = role;
+    if (banned !== undefined) filter.isBanned = banned === 'true';
+    if (q) {
+      // Escaped so a search for "a+b" cannot become a regex quantifier.
+      const safe = String(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.$or = [
+        { fullName: { $regex: safe, $options: 'i' } },
+        { email: { $regex: safe, $options: 'i' } },
+      ];
+    }
+
+    const [users, total] = await Promise.all([
+      User.find(filter)
+        .select('fullName email phone role isVerified isBanned banReason kycVerified kycName kycPhone sellerTier createdAt')
+        .sort({ createdAt: -1 })
+        .limit(perPage)
+        .skip((page - 1) * perPage)
+        .lean(),
+      User.countDocuments(filter),
+    ]);
+
+    res.json({ data: users, meta: { total, page, per_page: perPage } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    List trades for the admin console. Optional `?status=`, `?q=` (by trade id suffix).
+ * @route   GET /api/admin/trades?status=disputed&page=1&per_page=50
+ * @access  Private/Admin
+ */
+const getTrades = async (req, res, next) => {
+  try {
+    const { status } = req.query;
+    const TRADE_STATUSES = [
+      'pending', 'payment_window', 'paid', 'credentials_released',
+      'completed', 'disputed', 'cancelled',
+    ];
+
+    if (status && !TRADE_STATUSES.includes(status)) {
+      throw _httpError(400, `status must be one of: ${TRADE_STATUSES.join(', ')}`, 'INVALID_STATUS');
+    }
+
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const perPage = Math.min(Math.max(parseInt(req.query.per_page, 10) || 50, 1), 100);
+
+    const filter = status ? { status } : {};
+
+    const [trades, total] = await Promise.all([
+      Trade.find(filter)
+        .populate('buyer', 'fullName email')
+        .populate('seller', 'fullName email')
+        .populate('listing', 'platform niche priceKes')
+        .sort({ createdAt: -1 })
+        .limit(perPage)
+        .skip((page - 1) * perPage)
+        .lean(),
+      Trade.countDocuments(filter),
+    ]);
+
+    res.json({ data: trades, meta: { total, page, per_page: perPage } });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    One round-trip of the counts the overview page needs, so the tiles do not
+ *          fan out into five separate requests on a slow connection.
+ * @route   GET /api/admin/stats
+ * @access  Private/Admin
+ */
+const getStats = async (req, res, next) => {
+  try {
+    const [
+      pendingPayouts,
+      openDisputes,
+      openFraudFlags,
+      pendingKyc,
+      pendingListings,
+      pendingManualPayments,
+      recentTrades,
+    ] = await Promise.all([
+      PayoutQueue.countDocuments({ status: { $in: ['pending_approval', 'approved', 'processing'] } }),
+      Dispute.countDocuments({ status: { $ne: 'resolved' } }),
+      FraudFlag.countDocuments({ resolved: false }),
+      User.countDocuments({ kycVerificationMeta: { $exists: true, $ne: null }, kycVerified: false }),
+      Listing.countDocuments({ status: 'pending_review' }),
+      // Manual payment fallback rows awaiting an admin.
+      mongoose.model('MpesaTransaction').countDocuments({
+        'manualPayment.status': 'submitted',
+        status: 'pending',
+      }),
+      Trade.countDocuments({ createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } }),
+    ]);
+
+    res.json({
+      data: {
+        pendingPayouts,
+        openDisputes,
+        openFraudFlags,
+        pendingKyc,
+        pendingListings,
+        pendingManualPayments,
+        tradesLast7Days: recentTrades,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getAuditLogs,
   banUser,
@@ -655,4 +821,8 @@ module.exports = {
   approvePayout,
   rejectPayout,
   requeuePayout,
+  unbanUser,
+  getUsers,
+  getTrades,
+  getStats,
 };

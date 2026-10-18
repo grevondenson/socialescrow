@@ -55,7 +55,7 @@ const queuePayout = async (trade, amountKes, session) => {
   await AuditLog.create(
     [{
       action:   'payout_queued',
-      user:     trade.seller,
+      userId:   trade.seller,
       metadata: {
         tradeId:  trade._id.toString(),
         payoutId: payout._id.toString(),

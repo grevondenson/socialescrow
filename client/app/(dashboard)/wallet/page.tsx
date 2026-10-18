@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { fetchLedger, LedgerEntry, LedgerEntryType } from '../../../lib/services/wallet';
-import { formatKES } from '../../../lib/utils';
+import { formatKES, formatDateTime } from '../../../lib/utils';
+import { AppShell } from '../../../components/layout/AppShell';
 import styles from './wallet.module.css';
 
 const ENTRY_TYPES: { value: LedgerEntryType | ''; label: string }[] = [
@@ -33,10 +34,7 @@ function amountPrefix(type: LedgerEntryType): string {
 }
 
 function formatDate(iso: string) {
-  return new Intl.DateTimeFormat('en-KE', {
-    day: '2-digit', month: 'short', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  }).format(new Date(iso));
+  return formatDateTime(iso);
 }
 
 const PAGE_LIMIT = 20;
@@ -64,7 +62,8 @@ export default function WalletLedgerPage() {
   const totalCount = data?.pages[0]?.pagination.total ?? 0;
 
   return (
-    <div className={styles.page}>
+    <AppShell width="default">
+      <div className={styles.page}>
       <div className={styles.header}>
         <h1 className={styles.heading}>Transaction History</h1>
         <p className={styles.subheading}>
@@ -155,6 +154,7 @@ export default function WalletLedgerPage() {
           </button>
         </div>
       )}
-    </div>
+      </div>
+    </AppShell>
   );
 }
