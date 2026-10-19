@@ -26,13 +26,13 @@ export default function AdminKycPage() {
         <p className="text-sm text-slate-500">Review users flagged for verification before granting full access.</p>
       </div>
 
-      {data.length === 0 ? (
+      {(data ?? []).length === 0 ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-500 shadow-sm">
           All caught up — no KYC cases pending review.
         </div>
       ) : (
         <div className="space-y-6">
-          {data.map((user) => (
+          {(data ?? []).map((user) => (
             <div key={user._id} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="mb-4 grid gap-4 md:grid-cols-3">
                 <div>

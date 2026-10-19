@@ -87,7 +87,7 @@ Platform triggers M-Pesa B2C → seller phone
 
 | Layer | Technology |
 |---|---|
-| Frontend | Next.js 14, React 18, Tailwind CSS |
+| Frontend | Next.js 14, React 18, Tailwind CSS v3 (own token set — no shadcn, no UI kit), Lucide icons |
 | Backend | Node.js, Express.js |
 | Database | MongoDB + Mongoose |
 | Authentication | JWT (HTTP-only cookie), bcrypt |
@@ -95,7 +95,7 @@ Platform triggers M-Pesa B2C → seller phone
 | Real-time | Socket.io |
 | File storage | Cloudinary |
 | Email | Nodemailer |
-| Job queues | BullMQ (Phase 6) |
+| Job queues | BullMQ (STK status polling, payout disbursements) |
 | Frontend hosting | Vercel |
 | Backend hosting | Railway |
 | Database hosting | MongoDB Atlas |
@@ -108,33 +108,49 @@ Platform triggers M-Pesa B2C → seller phone
 socialescrow/
 ├── client/                         # Next.js 14 frontend
 │   ├── app/
+│   │   ├── page.tsx                # Marketplace feed (infinite scroll)
 │   │   ├── (auth)/
 │   │   │   ├── login/              # Login page
 │   │   │   └── register/           # Register page
-│   │   ├── (marketplace)/          # Browse listings
-│   │   │   └── listing/[id]/       # Listing detail
-│   │   ├── (trade)/
-│   │   │   └── [id]/               # Trade room (real-time)
+│   │   ├── listing/
+│   │   │   ├── [id]/               # Listing detail (server component)
+│   │   │   └── create/             # Create listing + screenshot upload
+│   │   ├── trade/
+│   │   │   ├── new/                # Trade confirmation / payment hand-off
+│   │   │   └── [id]/               # Trade room (rail, chat, dispute, payout)
 │   │   ├── (dashboard)/
-│   │   │   ├── seller/             # Seller dashboard
-│   │   │   └── buyer/              # Buyer dashboard
-│   │   └── (admin)/
-│   │       ├── overview/           # Platform analytics
-│   │       ├── trades/             # All trades
-│   │       ├── disputes/           # Dispute queue
-│   │       ├── fraud/              # Flagged users
-│   │       └── users/              # User management
+│   │   │   ├── seller/             # Seller dashboard + payout history
+│   │   │   ├── buyer/              # Buyer dashboard
+│   │   │   └── wallet/             # Ledger history
+│   │   └── admin/
+│   │       ├── page.tsx            # Overview: queues, circuit breaker
+│   │       ├── payouts/            # Payout approval queue
+│   │       ├── disputes/           # Dispute queue + resolution
+│   │       ├── fraud/              # Fraud flags
+│   │       ├── payments/           # Manual payment verification
+│   │       ├── kyc/                # KYC review queue
+│   │       ├── listings/           # Listing moderation
+│   │       ├── trades/             # All trades (read-only)
+│   │       ├── users/              # User directory, ban/unban
+│   │       └── audit-log/          # Audit trail
 │   ├── components/
-│   │   ├── ui/                     # Base components (Button, Input, Card)
-│   │   ├── auth/                   # Auth forms
-│   │   ├── marketplace/            # Listing cards, filters
-│   │   ├── trade/                  # Trade room UI, chat
-│   │   └── admin/                  # Dashboard panels
+│   │   ├── ui/                     # Button, Card, Field, Badge, Table, Dialog, Toast, States, Pagination
+│   │   ├── layout/                 # AppShell, SiteHeader
+│   │   ├── auth/                   # Auth form
+│   │   ├── marketplace/            # Feed, listing card, filters
+│   │   ├── trade/                  # TradeRoom, StatusRail, Payment/Credentials/Chat/Dispute/Payout panels
+│   │   └── dashboard/              # WalletCard
 │   ├── lib/
-│   │   ├── api.ts                  # Axios instance
-│   │   └── utils.ts                # formatKES, cn, formatNumber
-│   ├── hooks/                      # Custom React hooks
-│   ├── middleware.ts                # Next.js route protection
+│   │   ├── api.ts                  # Axios instance + refresh interceptor
+│   │   ├── status.ts               # Domain status vocabulary (tone + label)
+│   │   ├── socket.ts               # Socket.io client (token re-read on reconnect)
+│   │   ├── utils.ts                # formatKES, formatDate(Time), formatCountdown, cn
+│   │   └── services/               # Trade, wallet, listings, admin, adminOps, risk
+│   ├── hooks/
+│   │   ├── useAuth.ts
+│   │   └── useTradeSocket.ts       # Joins the room, invalidates queries on events
+│   ├── middleware.ts               # Route gating on the refresh cookie
+│   ├── tailwind.config.ts          # "Vault Ledger" tokens
 │   └── types/                      # TypeScript types
 │
 ├── server/                         # Express backend
@@ -250,20 +266,27 @@ Client:        http://localhost:3000
 
 ### Client (`client/.env.local`)
 
+A ready-to-copy template lives at `client/.env.local.example`.
+
 | Variable | Description |
 |---|---|
-| `NEXT_PUBLIC_API_URL` | Express server URL e.g. `http://localhost:5000/api` |
+| `NEXT_PUBLIC_API_URL` | Express API base URL — **must include the `/api` prefix**, e.g. `http://localhost:5000/api`. The axios instance in `client/lib/api.ts` uses this verbatim as its `baseURL`, so services call bare paths like `api.get('/listings')` |
 | `NEXT_PUBLIC_SOCKET_URL` | Socket.io server URL e.g. `http://localhost:5000` |
 
 ---
 
 ## API Reference
 
+All routes are mounted under `/api`. The client's axios `baseURL` already includes that prefix, so
+client code calls `api.get('/admin/payouts')`, not `/api/admin/payouts`.
+
 ### Auth
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
 | POST | `/api/auth/register` | Public | Register buyer or seller |
-| POST | `/api/auth/login` | Public | Login, returns JWT |
+| POST | `/api/auth/login` | Public | Login; access token in body, refresh token as httpOnly cookie |
+| POST | `/api/auth/refresh` | Public (cookie) | Rotate the refresh token, issue a new access token |
+| POST | `/api/auth/logout` | Public | Clear the refresh-token cookie |
 | GET | `/api/auth/me` | Protected | Get current user |
 | GET | `/api/auth/verify/:token` | Public | Verify email address |
 
@@ -272,41 +295,79 @@ Client:        http://localhost:3000
 |---|---|---|---|
 | GET | `/api/listings` | Public | Get all active listings (filter/sort/paginate) |
 | GET | `/api/listings/:id` | Public | Get listing detail |
-| POST | `/api/listings` | Seller | Create new listing |
+| POST | `/api/listings` | Seller (verified) | Create listing (multipart, up to 5 proof screenshots) |
 | PATCH | `/api/listings/:id` | Seller | Update own listing |
 | DELETE | `/api/listings/:id` | Seller | Remove own listing |
 
 ### Trades
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
-| POST | `/api/trades` | Buyer | Initiate trade on a listing |
+| POST | `/api/trades` | Buyer (verified) | Initiate trade on a listing |
 | GET | `/api/trades/:id` | Protected | Get trade detail |
-| PATCH | `/api/trades/:id/confirm` | Buyer | Confirm account received |
-| PATCH | `/api/trades/:id/dispute` | Buyer/Seller | Raise dispute |
-| PATCH | `/api/trades/:id/cancel` | Buyer/Seller | Cancel trade |
+| PATCH | `/api/trades/:id/mock-payment` | Buyer | Simulate payment (dev/sandbox) |
+| POST | `/api/trades/:id/vault` | Seller (verified) | Submit encrypted credentials to the vault |
+| GET | `/api/trades/:id/vault/reveal` | Buyer | One-time credential reveal (410 Gone after first read) |
+| PATCH | `/api/trades/:id/release` | Seller | Release credentials to the buyer |
+| PATCH | `/api/trades/:id/confirm` | Buyer | Confirm account received → triggers payout |
+| GET | `/api/trades/:id/payout` | Seller | Seller's payout state for this trade (`PayoutQueue` row, `.lean()`; 403 for the buyer) |
+| GET | `/api/trades/:id/messages` | Participant | Trade-room chat history |
+| POST | `/api/trades/:id/messages` | Participant | Send a chat message (also pushed over Socket.io) |
+| POST | `/api/trades/:id/dispute` | Buyer/Seller | Raise a dispute (freezes escrow) |
+
+> There is no `PATCH /api/trades/:id/cancel`. Payment-window expiry / auto-cancel is **not
+> implemented** (`paymentWindow.job.js` is an unimported stub), so a trade that is never paid stays
+> in `payment_window` until an admin or a future sweep acts on it.
 
 ### Wallet
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
 | GET | `/api/wallet` | Protected | Get own wallet balance |
 | GET | `/api/wallet/ledger` | Protected | Get own ledger history |
+| GET | `/api/wallet/reconcile` | Protected | Recompute and compare the caller's wallet identity against the ledger |
 
 ### M-Pesa
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
-| POST | `/api/mpesa/stk-push` | Buyer | Trigger STK Push to buyer phone |
-| POST | `/api/mpesa/callback` | Public (Safaricom) | C2B payment webhook |
-| POST | `/api/mpesa/b2c/result` | Public (Safaricom) | B2C payout result webhook |
+| POST | `/api/mpesa/stk-push` | Buyer (verified) | Trigger STK Push to buyer phone |
+| POST | `/api/mpesa/manual-payment` | Buyer (verified) | Submit a manual M-Pesa payment reference |
+| GET | `/api/mpesa/manual-payment/pending` | Admin | List manual payments awaiting verification |
+| PATCH | `/api/mpesa/manual-payment/:id/verify` | Admin | Approve/reject a manual payment |
+| POST | `/api/mpesa/webhook/stk-push` | Public (Safaricom, IP-allowlisted) | STK Push / C2B payment webhook |
+| POST | `/api/mpesa/webhook/kyc` | Public (Safaricom, IP-allowlisted) | KYC verification webhook |
+| POST | `/api/mpesa/webhook/b2c-result` | Public (Safaricom, IP-allowlisted) | B2C payout result webhook |
+| POST | `/api/mpesa/webhook/b2c-timeout` | Public (Safaricom, IP-allowlisted) | B2C payout timeout webhook |
 
 ### Admin
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
-| GET | `/api/admin/overview` | Admin | Platform analytics |
-| GET | `/api/admin/trades` | Admin | All trades |
-| GET | `/api/admin/disputes` | Admin | Open dispute queue |
-| PATCH | `/api/admin/disputes/:id` | Admin | Resolve dispute |
-| GET | `/api/admin/fraud` | Admin | Flagged users/trades |
-| PATCH | `/api/admin/users/:id/ban` | Admin | Ban a user |
+| GET | `/api/admin/platform` | Admin | Platform account + fees |
+| PATCH | `/api/admin/platform/circuit-breaker` | Admin | Toggle the payout circuit breaker |
+| GET | `/api/admin/users/kyc-review` | Admin | Pending KYC queue |
+| GET | `/api/admin/stats` | Admin | Queue counts for the overview tiles (`{ data }`) |
+| GET | `/api/admin/users?role=&banned=&q=&page=&per_page=` | Admin | User directory. Returns `{ data, meta }` |
+| PATCH | `/api/admin/users/:id/ban` | Admin | Ban a user (`{ banReason }`) |
+| PATCH | `/api/admin/users/:id/unban` | Admin | Restore a banned user (`{ reason }`) |
+| PATCH | `/api/admin/users/:id/kyc-review` | Admin | Approve/reject a KYC submission |
+| GET | `/api/admin/trades?status=&page=&per_page=` | Admin | All trades, read-only. Returns `{ data, meta }` |
+| GET | `/api/admin/listings` | Admin | All listings incl. pending review |
+| PATCH | `/api/admin/listings/:id/moderation` | Admin | Approve/reject a listing |
+| PATCH | `/api/admin/listings/:id/remove` | Admin | Force-remove a listing |
+| GET | `/api/admin/disputes` | Admin | Open dispute queue. Returns `{ disputes, pagination }` (not `{ data, meta }`) |
+| PATCH | `/api/admin/disputes/:id/resolve` | Admin | Resolve: `release_to_seller` / `refund_to_buyer` / `split` (`split` needs both amounts) |
+| GET | `/api/admin/payouts?status=&page=&per_page=` | Admin | Payout queue. Returns `{ data, meta }` |
+| PATCH | `/api/admin/payouts/:id/approve` | Admin | Approve a pending payout (enqueues B2C) |
+| PATCH | `/api/admin/payouts/:id/reject` | Admin | Reject a payout (`{ reason }`) |
+| PATCH | `/api/admin/payouts/:id/requeue` | Admin | Requeue a cancelled payout (`{ reason }`) |
+| GET | `/api/admin/fraud-flags?resolved=&riskLevel=&page=&per_page=` | Admin | Fraud flags. Returns `{ data, meta }` |
+| GET | `/api/admin/audit-log?limit=&page=` | Admin | Audit trail. Returns `{ logs, pagination }` |
+
+> Envelopes differ by endpoint: disputes and audits use named keys (`disputes`/`logs` + `pagination`),
+> while payouts and fraud flags use `{ data, meta }`. Check the controller before wiring a client.
+
+### AI
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| POST | `/api/ai` | Protected | Claude assistant call (Messages API) |
 
 ---
 
@@ -331,7 +392,7 @@ Client:        http://localhost:3000
 
 | Zone | Auth required | What's accessible |
 |---|---|---|
-| **Public** | ❌ No | Browse marketplace, view listing detail, seller profile, ratings, reviews, price |
+| **Public** | ❌ No | Browse marketplace, view listing detail, seller profile, price |
 | **Authenticated** | ✅ Yes | Deposit funds, initiate trade, trade room, dashboard |
 | **Admin** | ✅ Admin role | All trades, disputes, fraud flags, user management |
 
@@ -345,14 +406,16 @@ Client:        http://localhost:3000
 Every listing detail page shows:
 
 ```
-Account Info      platform, followers, niche, engagement rate, account age
-Media Proof       up to 5 screenshots uploaded by seller
-Seller Profile    name, member since date, verified badge
-Seller Stats      ⭐ rating · total trades · completion rate · avg release time
-Recent Reviews    last 5 reviews from previous buyers (verified trade badge)
-Price             KES formatted — with fee breakdown shown to buyer
+Account Info      platform, followers, niche, engagement rate
+Media Proof       seller-uploaded screenshots (if any)
+Seller Profile    name, tier badge
+Price             KES formatted
 CTA               "I'm Interested — Deposit & Start Trade" (auth-gated)
 ```
+
+> **Not implemented:** seller ratings, reviews, verified-trade badges, member-since, completion rate
+> and average release time. There is no Review model, route or UI; the reputation/reviews feature has
+> never been built.
 
 ---
 
@@ -360,7 +423,7 @@ CTA               "I'm Interested — Deposit & Start Trade" (auth-gated)
 
 ```
 STEP 1  Buyer browses marketplace (no login needed)
-        Views listing: account stats, screenshots, seller rating, reviews, price
+        Views listing: account stats, screenshots, seller tier, price
 
 STEP 2  Buyer decides they're interested
         Clicks "I'm Interested" → prompted to login/register if not authenticated
@@ -416,18 +479,60 @@ Uses **Safaricom Daraja API** (sandbox for development, production requires busi
 
 ## Build Phases
 
-| Phase | Feature | Status |
-|---|---|---|
-| 1 | Auth + KYC (JWT, bcrypt, email verify, RBAC) | 🔨 In progress |
-| 2 | Listings + Marketplace (CRUD, Cloudinary, search, pagination) | ⏳ Upcoming |
-| 3 | Credential Vault (AES-256, one-time reveal) | ⏳ Upcoming |
-| 4 | Wallet + Ledger (MongoDB transactions, atomic ops) | ⏳ Upcoming |
-| 5 | M-Pesa STK Push + C2B Webhook | ⏳ Upcoming |
-| 6 | Trade Engine + State Machine (BullMQ, auto-cancel) | ⏳ Upcoming |
-| 7 | Trade Chat Room (Socket.io, JWT handshake) | ⏳ Upcoming |
-| 8 | M-Pesa B2C Payout + reconciliation | ⏳ Upcoming |
-| 9 | Fraud Engine (rule-based scoring, aggregation pipelines) | ⏳ Upcoming |
-| 10 | Admin Dashboard (analytics, disputes, user management) | ⏳ Upcoming |
+Phase numbering follows [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md), which is the canonical build
+record. (An earlier version of this README used a different, conflicting 1–10 scheme; it has been
+retired.)
+
+| Phase | Feature | Backend | UI |
+|---|---|---|---|
+| 1 | Auth + KYC (JWT, bcrypt, email verify, RBAC) | ✅ Done | ✅ Done |
+| 2 | Listings + Marketplace (CRUD, Cloudinary, search, pagination) | ✅ Done | ✅ Done |
+| 3 | Trade Initiation + Credential Vault (envelope encryption, one-time reveal) | ✅ Done | ✅ Done |
+| 4 | Wallet + Ledger (MongoDB transactions, atomic ops, reconciliation) | ✅ Done | ✅ Done |
+| 5 | M-Pesa STK Push + C2B Webhook (+ webhook hardening) | ✅ Done | ✅ Done |
+| 5.5 | AI Assistant (`POST /api/ai`, Messages API) | ✅ Done | ⏳ Deferred |
+| 6 | Dispute Resolution + Real-time Chat (Socket.io, admin resolution) | ✅ Done | ✅ Done |
+| 7 | M-Pesa B2C Payouts + Automated Release (PayoutQueue, admin approval) | ✅ Done | ✅ Done |
+| 8 | Advanced Fraud Engine (velocity/IP checks, auto-freeze) | ⏳ Upcoming | ⏳ Upcoming |
+| 9 | Full Admin Dashboard UI (all admin panels) | — | ✅ Done |
+
+**Current state:** Phases 1–7 are complete end to end — backend and UI. The three UI items that had
+been deferred since 12 Aug 2026 (Phase 5 payment wiring, Phase 6 chat + dispute, Phase 7 seller payout
+state) are built, and the Phase 9 admin console is finished: overview with the circuit-breaker control,
+trades, users, and system health, alongside the eight panels that already existed.
+
+Verification at this commit: `next build` emits 22/22 routes with zero type errors; the server suite is
+**140 tests green** across 8 suites. What tests cannot prove is the money path against live Daraja —
+that needs sandbox credentials and a public callback URL, and has still never been run.
+
+Remaining work is Phase 8 (the fraud engine) and the deferred major dependency upgrades below. The
+seven older admin panels render correctly but still use raw utility classes rather than the shared
+`Table`/`Dialog`/`toast` primitives — a styling pass, not a functional gap.
+
+### Known Deferred Upgrades
+
+`npm audit fix` (without `--force`) has been run in both packages. The advisories below remain
+because their only fix is a semver-major bump that needs a call-site review first. They are
+deliberately deferred, not overlooked.
+
+| Package | Current | Fix requires | Why deferred |
+|---|---|---|---|
+| `nodemailer` (server) | 6.x | 10.x | Major-version rewrite; SMTP-injection advisories need a review of every `sendMail`/template call site before upgrading |
+| `uuid` (server) | 9.x | 14.x | Major bump; ESM/exports shape changed — check the `bullmq` transitive use before moving |
+| `bullmq` (server) | 3.x | 6.x | Major bump; queue/worker APIs changed (Redis config, retries, job options) and `jobs/*.job.js` would need retesting against live Redis |
+| `next` (client) | 14.2.35 | 16.x | Breaking App Router upgrade; stays on the 14.2.x patch line until a planned migration |
+| `jest` (server) | 29.x | 30.x | Dev-only (test runner); the residual advisories are in Jest's own transitive deps and do not ship to production |
+
+Audit totals at the time of writing:
+
+- **Client — 13 vulnerabilities (2 moderate, 10 high, 1 critical).** Up from 6 after adding the UI
+  toolchain. The critical and most of the high advisories trace back to `next` core; the rest are in
+  the `postcss`/`tailwindcss` build chain and `eslint-config-next` → `@next/eslint-plugin-next` →
+  `glob` → `brace-expansion`. None ship to the browser bundle except what `next` itself carries.
+  Clearing them requires `next@16` plus a Tailwind major. Re-measured at this commit.
+- **Server — 38 (31 high, 7 moderate, 0 critical).** Mostly dev/test tooling (`jest@29`, `nodemon`,
+  `braces`), plus `nodemailer@6`, the `uuid@9`/`bullmq@3` pair, and transitive `socket.io`/`express`
+  deps. None are shipped to the browser.
 
 ---
 

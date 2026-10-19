@@ -56,7 +56,7 @@ const _failPayout = async (payout, lastError, payload) => {
   // payout stays retryable. Nothing was debited, so reconciliation is unaffected.
   await AuditLog.create({
     action:   'payout_failed',
-    user:     payout.seller,
+    userId:   payout.seller,
     metadata: {
       tradeId:   payout.trade.toString(),
       payoutId:  payout._id.toString(),
@@ -254,7 +254,7 @@ const processB2CResult = async (payload) => {
       await AuditLog.create(
         [{
           action:   'payout_sent',
-          user:     payout.seller,
+          userId:   payout.seller,
           metadata: {
             tradeId:            payout.trade.toString(),
             payoutId:           payout._id.toString(),

@@ -8,10 +8,10 @@
 
 | Field | Value |
 |---|---|
-| **Active Phase** | Phase 7 — B2C Payouts & Automated Release _(backend done + tested, UNCOMMITTED; Phase 7 UI deferred. Phases 5 & 6 backend done; their UI deferred)_ |
-| **Week** | Week 3 |
+| **Active Phase** | Phase 9 — Admin Dashboard **complete**; Phases 5, 6 & 7 UI debt **cleared** (backend + UI done and green) |
+| **Week** | Week 4 |
 | **Start date** | 8 June 2026 |
-| **Current branch** | `phase-6` |
+| **Current branch** | `feat/ui-buildout-deferred` (from `bc2b9af`) |
 | **Server** | http://localhost:5000 |
 | **Client** | http://localhost:3000 |
 | **DB** | MongoDB Atlas — `socialescrow` |
@@ -77,31 +77,45 @@
 ### Phase 5.5 — AI Assistant (added ahead of plan — verify before relying on it)
 - [x] `POST /api/ai` — JWT-protected endpoint wired in `index.js`
 - [x] `anthropic.service.js` — `callClaude()` HTTP wrapper (env: `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY`)
-- [ ] ⚠️ Still on the legacy Text Completions API (`/v1/complete`, `max_tokens_to_sample`) with an invalid model id `claude-3.5-mini` — migrate to the Messages API (`/v1/messages`) and a real model id (e.g. `claude-haiku-4-5-20251001`) before use
+- [x] Migrated to the Messages API — `POST /v1/messages`, `max_tokens` + `messages[]` payload, response parsed from `content[0].text`, model `claude-haiku-4-5-20241022` (commit `3dc2114`)
 
 ## Pending Phases
 
-### ⏸️ Deferred Work (skipped, tracked as debt — do NOT lose these)
-- **Phase 5 frontend UI** — STK Push UI, Manual Fallback UI, Admin manual-payment verification UI.
-  Backend endpoints exist and are hardened + tested; only the browser wiring is outstanding.
-  Deferred on 12 Aug 2026 to proceed to Phase 6 backend. Revisit in the dedicated frontend pass.
-- **Phase 5 end-to-end validation** — register → verify → STK push → webhook → escrow lock → reveal → payout.
-  Blocked on the UI above + a live/staging Daraja callback URL.
-- **`/api/ai` migration** — still on the legacy `/v1/complete` API with an invalid model id (see Phase 5.5).
-- **Phase 6 frontend UI** — chat panel + message feed in `client/app/trade/[id]/page.tsx`; "Raise Dispute" button + confirmation and hiding "Release" when `status === 'disputed'`; `client/lib/socket.ts` + the `socket.io-client` dependency; admin disputes page (`client/app/admin/disputes/page.tsx`, currently a stub). All blocked on client access-token handling (store token from login, attach as Bearer, feed the socket `auth.token`) — the prerequisite that makes chat/disputes authenticable. Backend is done + tested (15 dispute/chat tests). Deferred on 12 Aug 2026.
+### ⏸️ Deferred Work (cleared 18 Oct 2026 — kept as a record of what was outstanding)
+
+> **All three UI debts below were built in the `feat/ui-buildout-deferred` branch.** The entries are
+> retained because the reasoning still applies to what remains: the end-to-end run against live
+> Daraja is still outstanding, and it is the only thing standing between "tested" and "proven".
+
+- **Phase 5 frontend UI** — ✅ **DONE.** STK Push, manual-payment fallback and the payment-window
+  countdown live in `components/trade/PaymentPanel.tsx`; admin manual-payment verification is in
+  `client/app/admin/payments/page.tsx`.
+- **Phase 5 end-to-end validation** — ⏳ **STILL OUTSTANDING.** register → verify → STK push → webhook
+  → escrow lock → reveal → payout has **never been run against live Daraja** — it needs sandbox
+  credentials + a public callback URL.
+- **`/api/ai`** — migrated to the Messages API with a valid model id (commit `3dc2114`); no longer blocked.
+  The UI for it is still deferred (no assistant surface in the client).
+- **Phase 6 frontend UI** — ✅ **DONE.** `client/lib/socket.ts` + `hooks/useTradeSocket.ts` (token
+  re-read on every reconnect so a 15-minute access-token rotation does not silently kill the socket);
+  chat panel, dispute dialog, and the release control hidden while `status === 'disputed'`.
+- **Phase 7 frontend UI** — ✅ **DONE.** Seller payout state in the trade room via
+  `GET /api/trades/:id/payout` (new endpoint; seller-only, 403 for the buyer), rendered by
+  `PayoutPanel.tsx` with pending → approved → processing → sent/failed.
 
 ### Phase 6 — Dispute Resolution & Real-time Chat
 - [x] Socket.io integration for real-time messaging _(backend done — `sockets/trade.socket.js` implements JWT-handshake auth + `join_trade`/`leave_trade` room membership; wired into `index.js`, test-guarded so Jest stays clean)_
 - [x] Dispute model and escalation flow _(backend done — `POST /api/trades/:id/dispute` freezes escrow → `Trade.disputed` / `EscrowRecord.frozen`; chat via `GET`/`POST /api/trades/:id/messages`)_
 - [x] Admin dispute resolution endpoint _(backend done — `GET /api/admin/disputes`, `PATCH /api/admin/disputes/:id/resolve` for `release_to_seller` / `refund_to_buyer` / `split`; `escrow.service.split()` added, fee waived on splits)_
-- [ ] **Phase 6 frontend UI** — deferred (see _Deferred Work_)
+- [x] **Phase 6 frontend UI** — chat panel, dispute dialog, release hidden while disputed
 
 ### Phase 7 — B2C Payouts & Automated Release
 - [x] PayoutQueue model _(`models/PayoutQueue.model.js` — one row per trade (`trade` is unique), statuses `pending_approval → approved → processing → sent | failed | cancelled`, correlated to Daraja by `conversationId`/`originatorConversationId`)_
 - [x] M-Pesa B2C integration for seller payouts _(`services/payout.service.js` — `sendB2C` (CAS `approved → processing`, breaker-gated), `processB2CResult`, `processB2CTimeout`; callbacks at `POST /api/mpesa/webhook/b2c-result` and `/b2c-timeout`, IP-allowlisted; dispatch via the `payout-disbursements` BullMQ queue in `jobs/payout.job.js`, 3 attempts, exponential backoff, 4xx classified `UnrecoverableError`)_
 - [x] Admin payout approval flow _(`GET /api/admin/payouts`, `PATCH /api/admin/payouts/:id/approve|reject|requeue`; approve enqueues after commit, reject accepts `pending_approval`/`approved`, requeue takes a `cancelled` row back to `pending_approval`)_
 - [x] Ledger + reconciliation correctness _(pre-Phase-7 bugfix: `WITHDRAWAL` debit type added, `SELLER_PAYOUT` classified as a credit, `PLATFORM_FEE` excluded from the wallet identity — see ADR 31)_
-- [ ] **Phase 7 frontend UI** — deferred. Admin payout queue page + seller "payout sent" state in the trade room. Same blocker as Phase 6 UI (client access-token handling).
+- [x] **Phase 7 frontend UI** — admin payout queue, seller payout history, buyer "Confirm Receipt",
+  and the seller's live payout state in the trade room (`components/trade/PayoutPanel.tsx`, fed by
+  `GET /api/trades/:id/payout`).
 
 ### Phase 8 — Advanced Fraud Engine
 - [ ] Automated risk scoring (IP mismatch, velocity checks)
@@ -109,8 +123,14 @@
 - [ ] Auto-freeze accounts based on risk score
 
 ### Phase 9 — Full Admin Dashboard UI
-- [ ] React admin dashboard
-- [ ] System health monitoring
+- [x] React admin panels: payouts, disputes, fraud flags, audit log, KYC, listings, payments, platform
+- [x] `admin/overview` (now `/admin`) — queue counts via `GET /api/admin/stats`, platform account,
+  circuit-breaker control with a confirmation dialog
+- [x] `admin/trades` — read-only, status filter, `GET /api/admin/trades`
+- [x] `admin/users` — directory with role/ban filters, ban + unban, `GET /api/admin/users`
+- [x] System health — DB/queue state and the trades-last-7-days count on the overview
+- [ ] Styling migration: the eight older panels still use raw utility classes rather than the shared
+  `Table` / `Dialog` / `toast` primitives. Functional, not yet consistent.
 
 
 ```
@@ -145,9 +165,9 @@ ESCROW ZONE
 | 9 | Ledger entries immutable | Pre-save hooks throw on update/findOneAndUpdate | Financial records are append-only. Never edit history |
 | 10 | KES stored as integers | No floats anywhere in financial models | Floating point causes financial bugs. Store 15000, not 15000.00 |
 | 11 | Platform fee | 6% deducted at completion, not at deposit | Taken when value is confirmed, not speculatively |
-| 12 | Credential encryption | AES-256-CBC, key in VAULT_ENCRYPTION_KEY env var | Key separated from data. Never store plain credentials |
+| 12 | Credential encryption | AES-256-GCM, 12-byte IV, per-record data key wrapped by a master key, stored auth tag. Master key in VAULT_ENCRYPTION_KEY | Authenticated encryption (tamper-detecting). Never store plain credentials |
 | 13 | Trade state machine | Enum with explicit valid transitions only | Prevents invalid jumps. CANCELLED → COMPLETED is impossible |
-| 14 | Seller stats storage | Materialized on User.reputation, recomputed after each trade | O(1) reads for listing feed. Never aggregate per request on high-traffic pages |
+| 14 | Seller stats storage | **NOT IMPLEMENTED** — `User.reputation` and `sellerTier` are never written by any code | Design intent only; do not assume per-request aggregation exists |
 | 15 | Seller tier / badge | none → verified → trusted → top_seller | Verified = email + KYC. Trusted = 5+ trades + no flags. Top = 20+ trades + 95%+ + 4.5+ rating |
 | 16 | Architecture pattern | Modular monolith | One Express app, clear service boundaries. Controllers → Services → Models. No cross-controller calls |
 | 17 | Service boundaries | controllers call services only, never other controllers | If microservices needed later, each service folder becomes a deployable |
@@ -165,6 +185,10 @@ ESCROW ZONE
 | 29 | Trade initiation gate | "I'm Interested" → redirects to login if unauth → returns to listing after auth | Smooth UX. Never block browsing. Only gate the money action |
 | 30 | Deployment stack | Vercel (Next.js) + Railway (Express + Redis) + MongoDB Atlas + Cloudinary | Railway public domain works as Daraja webhook URL from day one |
 | 31 | Ledger classification for the wallet identity | `CREDIT_TYPES = ['DEPOSIT','SELLER_PAYOUT']`, `DEBIT_TYPES = ['ESCROW_RELEASE','WITHDRAWAL']`, `PLATFORM_FEE` excluded. Reconciliation asserts `sum(credits) − sum(debits) === availableBalance + lockedInEscrow + pendingPayout` | The identity has to hold from **the seller's wallet's** point of view, not the platform's. `SELLER_PAYOUT` is what escrow release *credits into* the seller — a credit, though the name reads like an outflow. `ESCROW_RELEASE` is the buyer's locked funds leaving their wallet — a debit. `WITHDRAWAL` (new in Phase 7) is the B2C disbursement that finally moves money off-platform, and is the only thing that clears `pendingPayout`. `PLATFORM_FEE` is excluded because it never touches a user wallet — it lands on `PlatformAccount`, so counting it would put the identity permanently out by the fee on every trade |
+| 32 | Client styling layer | Tailwind CSS v3.4 with our own token set. No shadcn/ui, no component kit, no CSS-in-JS | The client was written in Tailwind utility classes for three phases with Tailwind **never installed** — no dependency, no config, no `@tailwind` directives — so every class was inert and seven "finished" pages rendered unstyled. Adding the real toolchain was the fix; adopting a kit on top of it would have imported a second, conflicting design language for a product whose visual identity is deliberately its own |
+| 33 | Design system shape | ~12 primitives in `components/ui/` + `lib/status.ts` for the domain vocabulary; one memorable device (the escrow status rail) | Every admin page had reimplemented its own table, badge and status-colour map, so `payment_window` rendered four different ways on four screens. A small primitive set plus a single status map fixes the drift without a dependency. The rail is the only place the design spends its boldness — five fixed stations, so a user can read whose turn it is at a glance |
+| 34 | Socket authentication across token rotation | `auth` is a **function** on the socket.io client, re-read on every (re)connect | The access token lives in memory and expires in 15 minutes; the server reads `handshake.auth.token` once at connection time. A socket that reconnects an hour later would present a dead token and be rejected silently. Passing a function means each reconnect attempt picks up the current token |
+| 35 | Seller payout visibility | `GET /api/trades/:id/payout` returns the `PayoutQueue` row to the **seller only**, `.lean()` with an explicit field list | Payout data was admin-only, so the seller could see "pending payout" in their balance but never whether it was approved, sending, sent or failed. The buyer gets 403 — it is not their money and the row carries the seller's disbursement state. Explicit `select` keeps Daraja payloads and the result blob off the wire |
 
 ---
 
@@ -248,7 +272,8 @@ ENDPOINTS:
 | `trusted` | 🔵 Trusted Seller | Verified + 5+ completed trades + 0 active fraud flags |
 | `top_seller` | ⭐ Top Seller | Trusted + 20+ trades + 95%+ completion + 4.5+ rating |
 
-Recomputed by `reputationService.recompute(userId)` after every trade completion.
+**NOT IMPLEMENTED.** There is no `reputation.service.js`, and nothing in the codebase writes
+`User.reputation` or `sellerTier`. The tier table above describes intended behaviour only.
 
 ---
 
@@ -301,7 +326,7 @@ Switch by updating AUTO_PAYOUT=true in Railway env vars.
 
 Safety rails, all Phase 7:
   - Kill switch: PlatformAccount.payoutsEnabled=false makes escrow release, sendB2C,
-    and admin approve all throw 503. Toggle at PATCH /api/admin/circuit-breaker.
+    and admin approve all throw 503. Toggle at PATCH /api/admin/platform/circuit-breaker.
   - Boot guard: index.js exits if NODE_ENV=production OR AUTO_PAYOUT=true while any of
     the five MPESA_B2C_* / MPESA_INITIATOR_NAME / MPESA_SECURITY_CREDENTIAL vars is missing.
   - CAS on every transition, so two admins (or a retried job) can never double-disburse.
@@ -364,9 +389,13 @@ Confirmed wired in `admin.routes.js` (all `protect` + `requireRole('admin')`):
 
 ```
 GET   /api/admin/audit-log                 recent AuditLog entries (paginated)
-PATCH /api/admin/users/:id/ban             ban a user { reason }
+GET   /api/admin/stats                     queue counts for the overview tiles
+GET   /api/admin/users                     user directory ?role= ?banned= ?q= ?page= ?per_page=
+PATCH /api/admin/users/:id/ban             ban a user { banReason }
+PATCH /api/admin/users/:id/unban           restore a banned user { reason }
 GET   /api/admin/users/kyc-review          users pending KYC manual review
 PATCH /api/admin/users/:id/kyc-review      approve/reject KYC
+GET   /api/admin/trades                    all trades, read-only ?status= ?page= ?per_page=
 GET   /api/admin/listings                  admin listing queue
 PATCH /api/admin/listings/:id/moderation   approve/reject a listing
 PATCH /api/admin/listings/:id/remove       admin remove a listing
@@ -404,8 +433,10 @@ POST  /api/mpesa/webhook/b2c-result        payout outcome — the only thing tha
 POST  /api/mpesa/webhook/b2c-timeout       Daraja never dequeued the request → row 'failed'
 ```
 
-Not yet built (still planned): `GET /api/admin/fraud-flags`,
-`PATCH /api/admin/users/:id/unban`. Full React admin dashboard UI → Phase 9.
+Not yet built: nothing from the Phase 1–9 admin list. `GET /api/admin/fraud-flags` **is** built
+(`admin.routes.js`, returns `{ data, meta }`), and `PATCH /api/admin/users/:id/unban` was added on
+18 Oct 2026 — it had been listed as planned since Phase 1, which meant a banned user could never be
+restored through the product.
 
 ---
 
@@ -449,7 +480,7 @@ totalDeposited, totalWithdrawn, currency(KES)
 ### LedgerEntry — IMMUTABLE
 ```
 trade(ref), user(ref)
-type(DEPOSIT|ESCROW_LOCK|ESCROW_RELEASE|PLATFORM_FEE|SELLER_PAYOUT|REFUND|DISPUTE_HOLD)
+type(DEPOSIT|ESCROW_LOCK|ESCROW_RELEASE|PLATFORM_FEE|SELLER_PAYOUT|REFUND|DISPUTE_HOLD|WITHDRAWAL)
 amountKes, balanceBefore, balanceAfter, reference, note
 ```
 
@@ -513,14 +544,14 @@ retryCount, lastPolledAt
 | Service | Does |
 |---|---|
 | `mpesa.service.js` | Daraja OAuth token, STK Push, C2B callback processing, B2C payout, transaction status poll |
-| `vault.service.js` | AES-256-CBC encrypt/decrypt, one-time reveal logic, expiry enforcement |
+| `vault.service.js` | AES-256-GCM encrypt/decrypt (12-byte IV, per-record data key, stored auth tag); one-time reveal enforced by the controller's `revealed: false` CAS, not by the service |
 | `escrow.service.js` | lock() release() freeze() refund() — all use MongoDB sessions |
 | `wallet.service.js` | Atomic debit/credit with session, ledger entry creation, balance reconciliation |
-| `reputation.service.js` | recompute(userId) → updates User.reputation + sellerTier after each trade |
+| `reputation.service.js` | **NOT BUILT — file absent.** Nothing writes User.reputation or sellerTier |
 | `reconciliation.service.js` | reconcileWallet() + reconcilePlatformAccount() — ledger-vs-balance integrity, auto-flag + circuit breaker on mismatch |
-| `fraud.service.js` | Risk score calculation, auto-flag creation, pattern detection via aggregation pipelines |
-| `email.service.js` | Nodemailer — verify email, trade notifications, dispute alerts, payout confirmations |
-| `notification.service.js` | In-app + email on all trade state changes |
+| `fraud.service.js` | **EMPTY STUB — one line, zero call sites.** No risk scoring is implemented (Phase 8) |
+| `email.service.js` | **EMPTY STUB — one line, zero call sites.** No email is ever sent |
+| `notification.service.js` | **EMPTY STUB — one line, zero call sites.** No in-app or email notifications exist |
 | `audit.service.js` | log(action, req, metadata) — called from controllers on every high-risk action |
 | `anthropic.service.js` | callClaude() HTTP wrapper for the `/api/ai` assistant (experimental — see Phase 5.5) |
 
@@ -568,7 +599,7 @@ The last five are enforced at boot: `index.js` exits 1 if `NODE_ENV=production` 
 ## Known Issues / Blockers
 
 - **[FIXED 12 Aug 2026]** `reconciliation.service.js` declared `reconcilePlatformAccount` twice as a top-level `const` → `SyntaxError: Identifier ... already declared`. Because it's imported via `wallet.controller → wallet.routes → index.js`, this crashed the entire server (and test suite) on boot. Removed the duplicate; kept the circuit-breaker-aware version. Verified: `node --check` passes and `NODE_ENV=test node -e "require('./src/index.js')"` loads clean.
-- **[OPEN]** `/api/ai` uses the legacy Text Completions API and an invalid model id — see Phase 5.5. Do not rely on it until migrated.
+- **[RESOLVED 14 Aug 2026]** `/api/ai` used the legacy Text Completions API (`/v1/complete`, `max_tokens_to_sample`) with an invalid model id `claude-3.5-mini`. Migrated to `POST /v1/messages` with a `messages[]` payload and model `claude-haiku-4-5-20241022`; response is read from `content[0].text`. Commit `3dc2114`. (Older notes describing this as OPEN are stale.)
 - **[FIXED 12 Aug 2026]** M-Pesa payment-confirmation hardening — plan [PLAN-mpesa-webhook-hardening.md](PLAN-mpesa-webhook-hardening.md), Steps 0–6. Closed three confirmed vulnerabilities: (1) **self-forgeable webhooks** — added `trust proxy` (`index.js`) + a fail-closed IP allowlist middleware (`mpesaIpAllowlist.middleware.js`) on both webhook routes, plus an independent STK Query re-confirmation gate before any settlement (`MPESA_REQUIRE_QUERY_CONFIRM`, default on); (2) **unvalidated amount** — the callback `Amount` and the admin-entered manual amount are now checked against `trade.amountKes`; a mismatch marks the txn `failed` and raises a `WEBHOOK_MISMATCH` FraudFlag without settling; (3) **replay** — `mpesaReceiptNumber` and `manualPayment.referenceCode` are now `unique + sparse`, with an E11000 duplicate-key treated as an idempotent no-op. Also stopped leaking `checkoutRequestId`/`merchantRequestId` in the STK trigger response, and stopped returning HTTP 500 for unknown/duplicate callbacks (now `200 {status:'ignored'}` so Daraja stops retrying). Verified: `node --check` clean, app boots under `NODE_ENV=test`, and the new `tests/mpesa.webhook.test.js` passes **12/12** (forgery, non-zero result, unknown-txn ack, amount mismatch, happy-path settlement, receipt replay, manual match/mismatch, + 4 allowlist unit tests) against a `MongoMemoryReplSet`. Step 7 (git hooks) intentionally out of scope. **Deploy note:** build the two unique indexes against a prod data copy first — a live build fails if duplicate receipts already exist; and re-verify `MPESA_ALLOWED_IPS` against current Safaricom egress ranges (they drift).
 - **[FIXED 12 Aug 2026]** `tests/auth.test.js` (was 8/14 red — pre-existing, independent of the M-Pesa work). Three causes: (1) **dominant** — `registerLimiter`/`loginLimiter` (`max: 5`, in-memory store) 429'd the 6th+ request because the counter never resets between tests, which cascaded into the `TypeError`/401 failures; (2) `register`/`login` deliver the refresh token as an httpOnly cookie (the frontend uses `withCredentials` + reads the `refreshToken` cookie), but the tests asserted `res.body.refreshToken`; (3) tests read `verifyToken` (a `select:false` field) without `.select('+verifyToken')` and posted an incomplete listing body. **Kept the secure cookie design** (confirmed correct against the client); fix was test-side (cookie assertions, `.select('+verifyToken')`, valid listing payload) + a `NODE_ENV==='test'` skip on the two limiters (`rateLimiter.middleware.js`, no production behaviour change). Verified: auth **14/14**, full suite **26/26** green.
 - **[FIXED 12 Aug 2026]** `listings.controller.js` `createListing` cast the *optional* `accountAgeYears` via `Number(accountAgeYears)`; when omitted this is `NaN`, which Mongoose refuses to cast → **HTTP 500** on every listing POST that left the field out. Fixed by only setting `accountAgeYears` on the document when it's actually provided (non-null / non-empty). Required numerics (`followers`, `priceKes`) are already guarded by the missing-fields check; `engagementRate` is a String and untouched. Regression covered: the "listing creation after email verification" test in `auth.test.js` now posts *without* `accountAgeYears` and asserts 201.
@@ -578,7 +609,48 @@ The last five are enforced at boot: `index.js` exits 1 if `NODE_ENV=production` 
 
 ## Next Session Goals
 
-**Saturday 16 Aug 2026 — Phase 7 backend done (UNCOMMITTED)**
+**Sunday 18 Oct 2026 — Deferred UI cleared; design system installed**
+
+The three UI debts open since 12 Aug 2026 (Phases 5, 6, 7) and the last Phase 9 stubs were built on
+`feat/ui-buildout-deferred`. Delivered this session:
+
+- **Root cause found first:** Tailwind was never installed. No dependency, no config, no `@tailwind`
+  directives — yet the whole client was written in Tailwind utilities. Every class was inert. Installed
+  v3.4 and built a real token system ("Vault Ledger": ink/paper/forest/mint/ochre/clay) instead of
+  adopting a kit.
+- **Foundation:** `tailwind.config.ts`, rewritten `globals.css`, Bricolage Grotesque + Instrument Sans
+  via `next/font`, ~12 primitives (`Button`, `Card`/`Stat`, `Field`/`Input`/`Textarea`/`Select`,
+  `Badge`, `Table`, `Pagination`, `States`, `Dialog`/`ConfirmDialog`, `Toast`), `AppShell` + `SiteHeader`,
+  and `lib/status.ts` as the single status vocabulary.
+- **Trade room** split from one 365-line file into `TradeRoom`, `StatusRail`, `PaymentPanel`,
+  `CredentialsPanel`, `ChatPanel`, `DisputePanel`, `PayoutPanel`; socket client with token re-read on
+  reconnect. Chat, dispute and seller payout state are now live.
+- **Admin console:** sidebar shell; overview with `GET /admin/stats` and the circuit-breaker control;
+  `admin/trades`; `admin/users` with ban **and unban**.
+- **Server additions:** `GET /admin/stats`, `GET /admin/trades`, `GET /admin/users`,
+  `PATCH /admin/users/:id/unban`, `GET /trades/:id/payout`; `vaultRevealedAt` exposed on the trade.
+- **Two pre-existing bugs found and fixed:** `getTrade` populated `name` when the `User` field is
+  `fullName`, so party names were always blank; and six `AuditLog.create` call sites still wrote
+  `user:` after the schema field was renamed to `userId`. Mongoose silently drops unknown paths, so
+  `payout_queued`, `payout_failed`, `payout_sent`, `trade_confirmed`, `dispute_raised` and
+  `kyc_mismatch` were all being audited **with no actor**. See ADR 33 and Known Issues.
+
+Verified: `next build` 22/22 routes, zero type errors; server **140/140** across 8 suites.
+
+Focus next on:
+1. [ ] **Sandbox end-to-end run** — still the only unproven thing. Live Daraja credentials, public
+   callback URLs, `MPESA_ALLOWED_IPS` re-checked against current Safaricom egress. Everything above is
+   tested against mocks, not against Safaricom.
+2. [ ] **Phase 8 — fraud engine.** `fraud.service.js` is still a one-line stub; nothing writes
+   `User.reputation` or `sellerTier`, so seller badges never appear. This is what `AUTO_PAYOUT=true`
+   is waiting for.
+3. [ ] **Styling migration of the eight older admin panels** onto the shared primitives, and replacing
+   the last `window.prompt` in `admin/payments`.
+4. [ ] **Dependency upgrades** — `next@16`, `nodemailer@10`, `uuid@14`, `bullmq@6`, `jest@30`. Client
+   audit is 13 (2 moderate, 10 high, 1 critical); server 38 (7 moderate, 31 high).
+5. [ ] Revisit `/api/ai` — the endpoint works, but there is no assistant surface in the client.
+
+**Saturday 16 Aug 2026 — Phase 7 backend done (committed + merged, PR #7)**
 B2C payouts are code-complete and tested against plan [PLAN-phase7-b2c-payouts.md](PLAN-phase7-b2c-payouts.md), Steps 0–6. Delivered this session:
 - **Step 0 — ledger/reconciliation bugfix** (two P0s found in the pre-phase audit): `SELLER_PAYOUT` was being counted as a debit and `PLATFORM_FEE` was inside the wallet identity, so reconciliation drifted by the fee on every completed trade. Added the `WITHDRAWAL` ledger type. See ADR 31.
 - `PayoutQueue` model (one row per trade — `trade` is unique), `services/payout.service.js` (`sendB2C` / `processB2CResult` / `processB2CTimeout`), `jobs/payout.job.js` (BullMQ `payout-disbursements`, 3 attempts + exponential backoff, 4xx → `UnrecoverableError`, startup sweep for rows stranded at `approved`).
@@ -588,11 +660,11 @@ B2C payouts are code-complete and tested against plan [PLAN-phase7-b2c-payouts.m
 - **Jest green — 120/120** (`payout.test.js` 66). Not covered by tests: the `UnrecoverableError` classification and the startup sweep, both of which need live Redis.
 
 Focus next on:
-1. [ ] **Commit Phase 7** — 18 paths still uncommitted on `phase-6`. Then branch/PR; never push to `main`.
+1. [x] **Commit Phase 7** — committed on `phase-7` (`8567dac`) and merged to `main` via PR #7 (`836e6b1`).
 2. [ ] **Sandbox end-to-end B2C** — the one thing tests cannot prove: real Daraja credentials, real callbacks hitting the public URLs, `MPESA_ALLOWED_IPS` verified against current Safaricom egress.
 3. [ ] Phase 8 groundwork the payout design already leans on: a repeatable sweep + Transaction Status query, which is also what would make `failed` rows safely re-queueable.
 4. [~] **DEFERRED** — Phase 7 UI (admin payout queue, seller payout state in the trade room), blocked behind client access-token handling like Phases 5–6.
-5. [ ] Migrate `/api/ai` off the legacy `/v1/complete` API (still open from 12 Aug).
+5. [x] Migrate `/api/ai` off the legacy `/v1/complete` API — done in commit `3dc2114` (Messages API + `claude-haiku-4-5-20241022`).
 
 **Tuesday 12 Aug 2026 — Phase 6 backend done**
 Dispute resolution + real-time chat backend is code-complete and tested. Delivered this session:
@@ -604,8 +676,8 @@ Dispute resolution + real-time chat backend is code-complete and tested. Deliver
 Focus next on:
 1. [~] **DEFERRED** — Phase 6 frontend UI (chat panel, dispute button, admin disputes page, `socket.io-client`) + client access-token handling. See _Deferred Work_.
 2. [~] **DEFERRED** — Frontend API wiring for Phase 5 + end-to-end integration test.
-3. [ ] Migrate `/api/ai` off the legacy `/v1/complete` API to Messages API + a valid model id (or remove until needed).
-4. [x] **Phase 7 (backend) complete** — `PayoutQueue`, M-Pesa B2C, admin approval flow. Done 16 Aug 2026.
+3. [x] Migrate `/api/ai` off the legacy `/v1/complete` API to Messages API + a valid model id — done in commit `3dc2114` (14 Aug 2026).
+4. [x] **Phase 7 (backend) complete** — `PayoutQueue`, M-Pesa B2C, admin approval flow. Done 16 Aug 2026; merged via PR #7.
 
 **Friday 12 Aug 2026 — Backend confirmed through Phase 5**
 Phases 1–5 backend is code-complete and the app module boots clean (verified today). Focus next on:
@@ -613,7 +685,7 @@ Phases 1–5 backend is code-complete and the app module boots clean (verified t
 2. [~] **DEFERRED** — Frontend API wiring for Phase 5: STK Push UI, Manual Fallback UI, Admin manual-payment verification UI
 3. [~] **DEFERRED** — End-to-end integration test: register → verify → STK push → webhook → escrow lock → reveal → payout
 4. [x] Jest suite green — **26/26** (auth 14 + M-Pesa 12, `--runInBand`). Auth fixes were test-side + a test-env rate-limiter skip; secure cookie design kept (see Known Issues).
-5. [ ] Migrate `/api/ai` off the legacy `/v1/complete` API to Messages API + a valid model id (or remove until needed)
+5. [x] Migrate `/api/ai` off the legacy `/v1/complete` API to Messages API + a valid model id — done in commit `3dc2114`.
 6. [x] **Phase 6 (backend) complete** — Socket.io wired; Dispute controller/routes + admin resolution endpoint built + tested
 
 ---
@@ -653,4 +725,12 @@ A phase is complete only when:
 
 ---
 
-_Last updated: 12 Aug 2026 — Phases 1–5 backend confirmed against code; boot-time SyntaxError in reconciliation.service.js fixed; AI endpoint + admin/mpesa endpoints documented._
+_Last updated: 18 Oct 2026 — Deferred UI cleared and the design system installed. Tailwind v3 had
+never been installed (no dependency, config or directives) despite the client being written entirely
+in utility classes; that is now fixed along with a token system and shared primitives. Phases 5/6/7 UI
+and the last Phase 9 stubs are done; `/admin` is the overview and `/admin/overview` redirects to it.
+New endpoints: `admin/stats`, `admin/trades`, `admin/users`, `users/:id/unban`, `trades/:id/payout`.
+Two pre-existing bugs fixed: the `fullName` populate on trades, and six `AuditLog` writers still using
+`user:` after the field was renamed to `userId` (silently stored no actor). ADRs 32–35 added.
+Verified: client build 22/22 routes, server 140/140. Branch: `feat/ui-buildout-deferred`._
+

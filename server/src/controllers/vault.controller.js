@@ -80,7 +80,9 @@ exports.revealCredentials = async (req, res, next) => {
         revealedAt: new Date(), 
         revealedTo: req.user.id 
       },
-      { new: true, select: '+encryptedCredentials iv' }
+      // All six crypto fields are select:false on the schema. Selecting only the ciphertext and
+      // IV left authTag / wrapped-key fields undefined, so decrypt() threw on every real reveal.
+      { new: true, select: '+encryptedCredentials +iv +authTag +encryptedDataKey +encryptedDataKeyIv +keyAuthTag' }
     );
 
     if (!vault) {

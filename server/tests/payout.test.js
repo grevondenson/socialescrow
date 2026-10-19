@@ -307,7 +307,7 @@ describe('escrow release queues a payout', () => {
 
     const audit = await AuditLog.findOne({ action: 'payout_queued' });
     expect(audit).not.toBeNull();
-    expect(audit.user.toString()).toBe(seller.user._id.toString());
+    expect(audit.userId.toString()).toBe(seller.user._id.toString());
     expect(audit.metadata.amountKes).toBe(sellerPayoutKes);
     expect(audit.metadata.status).toBe('pending_approval');
     expect(audit.metadata.autoPayout).toBe(false);
@@ -795,7 +795,7 @@ describe('admin payout endpoints', () => {
 
       const audits = await AuditLog.find({ action: 'payout_approved' });
       expect(audits).toHaveLength(1);
-      expect(audits[0].user.toString()).toBe(admin.user._id.toString());
+      expect(audits[0].userId.toString()).toBe(admin.user._id.toString());
       expect(audits[0].metadata.payoutId).toBe(payout._id.toString());
     });
 
@@ -875,7 +875,7 @@ describe('admin payout endpoints', () => {
 
       const audits = await AuditLog.find({ action: 'payout_rejected' });
       expect(audits).toHaveLength(1);
-      expect(audits[0].user.toString()).toBe(admin.user._id.toString());
+      expect(audits[0].userId.toString()).toBe(admin.user._id.toString());
       expect(audits[0].metadata.reason).toBe('seller under KYC review');
     });
 
@@ -949,7 +949,7 @@ describe('admin payout endpoints', () => {
 
       const audits = await AuditLog.find({ action: 'payout_requeued' });
       expect(audits).toHaveLength(1);
-      expect(audits[0].user.toString()).toBe(admin.user._id.toString());
+      expect(audits[0].userId.toString()).toBe(admin.user._id.toString());
       expect(audits[0].metadata.reason).toBe('seller confirmed new number');
     });
 

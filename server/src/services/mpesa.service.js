@@ -542,7 +542,7 @@ const handleKYCWebhook = async (req, res) => {
         await user.save();
 
         await AuditLog.create({
-          action: 'kyc_name_mismatch',
+          action: 'kyc_mismatch',
           userId: user._id,
           metadata: {
             MSISDN,

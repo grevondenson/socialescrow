@@ -9,7 +9,7 @@ const AuditLog = require('../models/AuditLog.model');
 exports.log = async (action, req, metadata = {}) => {
   try {
     await AuditLog.create({
-      user: req.user?.id,
+      userId: req.user?.id,
       action,
       ip: req.ip || req.connection.remoteAddress,
       userAgent: req.headers['user-agent'],
